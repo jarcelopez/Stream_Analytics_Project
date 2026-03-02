@@ -1,0 +1,16 @@
+fastavro==1.9.7
+
+# Configuration & validation
+pydantic==2.9.2
+PyYAML==6.0.2
+
+# Synthetic data & numerics
+faker==28.4.1
+numpy==2.1.3
+python-dateutil==2.9.0.post0
+
+# Optional: Kafka / Event Hubs (Kafka endpoint) integration
+confluent-kafka==2.6.0
+
+# Tooling & tests
+pytest==8.3.4

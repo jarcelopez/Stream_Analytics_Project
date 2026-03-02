@@ -1,0 +1,134 @@
+{
+  "type": "record",
+  "name": "CourierStatusEvent",
+  "namespace": "stream_analytics.food_delivery.v1",
+  "doc": "Courier status and telemetry events for a synthetic food-delivery platform. Designed to support Zone Stress Index, capacity, and SLA analytics.",
+  "fields": [
+    {
+      "name": "schema_version",
+      "type": "string",
+      "doc": "Logical version of this schema. Allows evolution over time.",
+      "default": "1.0.0"
+    },
+    {
+      "name": "event_id",
+      "type": "string",
+      "doc": "Unique identifier for this courier status event."
+    },
+    {
+      "name": "event_time",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "Event-time timestamp when this status was observed, in UTC."
+    },
+    {
+      "name": "ingest_time",
+      "type": [
+        "null",
+        {
+          "type": "long",
+          "logicalType": "timestamp-millis"
+        }
+      ],
+      "doc": "Optional processing/ingest time when the event was produced or sent to the broker.",
+      "default": null
+    },
+    {
+      "name": "courier_id",
+      "type": "string",
+      "doc": "Identifier for the courier."
+    },
+    {
+      "name": "zone_id",
+      "type": "string",
+      "doc": "Zone in which the courier is currently operating."
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "CourierStatus",
+        "symbols": [
+          "ONLINE",
+          "OFFLINE",
+          "ON_DELIVERY",
+          "IDLE"
+        ],
+        "doc": "High-level status of the courier, used for active session and stress calculations."
+      },
+      "doc": "Current operational status of the courier."
+    },
+    {
+      "name": "vehicle_type",
+      "type": {
+        "type": "enum",
+        "name": "VehicleType",
+        "symbols": [
+          "BIKE",
+          "SCOOTER",
+          "CAR",
+          "WALK"
+        ],
+        "doc": "Mode of transport used by the courier."
+      },
+      "doc": "Transport mode for this courier."
+    },
+    {
+      "name": "energy_level",
+      "type": [
+        "null",
+        "int"
+      ],
+      "doc": "Approximate remaining battery or fuel level as a percentage (0-100).",
+      "default": null
+    },
+    {
+      "name": "success_rate",
+      "type": [
+        "null",
+        "double"
+      ],
+      "doc": "Rolling success rate (0.0-1.0) for completed deliveries over a recent horizon.",
+      "default": null
+    },
+    {
+      "name": "estimated_eta_min",
+      "type": [
+        "null",
+        "double"
+      ],
+      "doc": "Estimated minutes remaining for the current delivery, if any.",
+      "default": null
+    },
+    {
+      "name": "active_delivery_order_id",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Optional order_id the courier is currently delivering, to link to OrderEvent stream.",
+      "default": null
+    },
+    {
+      "name": "is_anomalous",
+      "type": [
+        "null",
+        "boolean"
+      ],
+      "doc": "Optional flag used by the generator to tag synthetic anomalies (e.g., impossible ETAs or behaviour).",
+      "default": null
+    },
+    {
+      "name": "source",
+      "type": [
+        "null",
+        "string"
+      ],
+      "doc": "Optional field to denote the producer/source system or generator instance.",
+      "default": null
+    }
+  ]
+}
+
