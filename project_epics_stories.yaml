@@ -276,3 +276,58 @@ epics:
           - Discussion of schema and feed design decisions.
           - List of improvements needed for production (reliability, scalability, observability, ops).
 
+  - id: M2-E3
+    name: Milestone 2 – Demo Orchestration & Operability
+    milestone: 2
+    goal: >
+      Orchestrate the full demo experience from the Streamlit UI, provide
+      clear status visibility and a reproducible debug mode, and validate
+      key non-functional requirements (latency, responsiveness, setup time,
+      and robustness) described in the PRD.
+    stories:
+      - id: M2-S8
+        title: Orchestrate demo run from Streamlit UI
+        description: >
+          Implement controls in the Streamlit app to start and stop a local
+          demo run, wiring those controls into the generator and streaming
+          jobs so that a viewer can operate the full pipeline from the UI.
+        priority: high
+        estimate: M
+        depends_on: [M2-S2, M2-S6]
+        acceptance_criteria:
+          - Streamlit UI exposes controls to start and stop the demo run without using separate CLI commands.
+          - Starting the demo triggers data generation and streaming jobs according to documented config.
+          - Stopping the demo cleanly stops generator and streaming jobs without orphaned processes.
+          - The documented demo flow uses only the Streamlit UI and standard environment variables/config files.
+
+      - id: M2-S9
+        title: Implement demo status indicators and debug mode
+        description: >
+          Add clear demo status indicators to the Streamlit UI and implement
+          a low-volume debug mode with constrained throughput and entity
+          counts to quickly reproduce issues end-to-end.
+        priority: high
+        estimate: M
+        depends_on: [M2-S8]
+        acceptance_criteria:
+          - UI shows generator status (Running/Stopped/Error) and streaming job status (Running/Stopped/Error).
+          - UI shows timestamp of the last successfully processed batch, refreshed at a regular interval.
+          - A documented debug mode (e.g., config flag) limits event rate and entity counts so that a scenario can be reproduced within about one minute.
+          - Invalid records in debug runs are routed to a visible error sink (log, table, or view) without stopping the streaming job.
+
+      - id: M2-S10
+        title: Validate performance, responsiveness, and setup NFRs
+        description: >
+          Run targeted tests or demo sessions to validate the PRD’s
+          non-functional requirements for end-to-end latency, dashboard
+          responsiveness, setup time for a new user, and robustness under
+          typical demo load.
+        priority: medium
+        estimate: S
+        depends_on: [M2-S8, M2-S9]
+        acceptance_criteria:
+          - A short checklist or script exists to measure end-to-end latency and dashboard filter response times under typical demo load.
+          - At least one fresh-user setup test is performed and documented, including total time to first successful demo.
+          - A demo run under documented “typical load” completes without unhandled errors, with invalid records handled via the error sink.
+          - Results of these checks are summarized and linked back to NFR1–NFR6 in project documentation.
+

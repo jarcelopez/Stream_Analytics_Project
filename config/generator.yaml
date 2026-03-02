@@ -1,0 +1,22 @@
+## Core generator configuration
+##
+## These defaults are intentionally small so local demo runs are fast
+## and stay within the PRD’s latency and throughput expectations.
+##
+## All keys are snake_case to match the architecture conventions.
+
+zone_count: 3
+restaurant_count: 10
+courier_count: 15
+
+## Logical demand level for docs / UX
+demand_level: medium  # one of: low, medium, high
+
+## Approximate events per second across all feeds for the default demo
+events_per_second: 50
+
+## Reserved fields for future stories (edge cases, debug mode, samples)
+debug_mode_max_events_per_second: 100
+debug_mode_max_entity_count: 20
+sample_batch_size_per_feed: 500
+
