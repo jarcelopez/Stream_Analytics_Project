@@ -58,6 +58,67 @@ courier_count: 5
         )
 
 
+def test_edge_case_rates_defaults_valid(tmp_path, monkeypatch):
+    content = """
+zone_count: 3
+restaurant_count: 10
+courier_count: 15
+"""
+    _write_temp_yaml(tmp_path, content)
+    monkeypatch.setenv("PYTEST_PROJECT_ROOT_OVERRIDE", str(tmp_path))
+
+    config = load_typed_config(
+        relative_yaml_path="generator.yaml",
+        model_type=GeneratorConfig,
+        env_prefix="GENERATOR_",
+    )
+
+    assert config.late_event_rate == 0.0
+    assert config.duplicate_rate == 0.0
+    assert config.missing_step_rate == 0.0
+    assert config.impossible_duration_rate == 0.0
+    assert config.courier_offline_rate == 0.0
+
+
+def test_edge_case_rates_reject_negative_and_above_one(tmp_path, monkeypatch):
+    content = """
+zone_count: 3
+restaurant_count: 10
+courier_count: 15
+late_event_rate: -0.1
+duplicate_rate: 1.1
+"""
+    _write_temp_yaml(tmp_path, content)
+    monkeypatch.setenv("PYTEST_PROJECT_ROOT_OVERRIDE", str(tmp_path))
+
+    with pytest.raises(ValidationError):
+        load_typed_config(
+            relative_yaml_path="generator.yaml",
+            model_type=GeneratorConfig,
+            env_prefix="GENERATOR_",
+        )
+
+
+def test_edge_case_rates_reject_impossible_combinations(tmp_path, monkeypatch):
+    content = """
+zone_count: 3
+restaurant_count: 10
+courier_count: 15
+late_event_rate: 1.0
+duplicate_rate: 1.0
+missing_step_rate: 1.1
+"""
+    _write_temp_yaml(tmp_path, content)
+    monkeypatch.setenv("PYTEST_PROJECT_ROOT_OVERRIDE", str(tmp_path))
+
+    with pytest.raises(ValidationError):
+        load_typed_config(
+            relative_yaml_path="generator.yaml",
+            model_type=GeneratorConfig,
+            env_prefix="GENERATOR_",
+        )
+
+
 def test_env_overrides_applied(monkeypatch, tmp_path):
     content = """
 zone_count: 3

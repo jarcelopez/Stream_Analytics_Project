@@ -20,6 +20,16 @@ debug_mode_max_events_per_second: 100
 debug_mode_max_entity_count: 20
 sample_batch_size_per_feed: 500
 
+## Edge case configuration for Story 1.3
+##
+## Rates are expressed as probabilities in the range [0.0, 1.0].
+## A value of 0.0 means the edge case is effectively disabled.
+late_event_rate: 0.0
+duplicate_rate: 0.0
+missing_step_rate: 0.0
+impossible_duration_rate: 0.0
+courier_offline_rate: 0.0
+
 ## Output configuration for Story 1.2
 ##
 ## output_base_dir controls where file/sample-mode runs write data by default.

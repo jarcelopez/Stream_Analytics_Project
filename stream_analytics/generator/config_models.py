@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class GeneratorConfig(BaseModel):
@@ -26,6 +26,38 @@ class GeneratorConfig(BaseModel):
     debug_mode_max_events_per_second: Optional[float] = Field(default=100.0, gt=0.0, le=1_000.0)
     debug_mode_max_entity_count: Optional[int] = Field(default=20, ge=1, le=1_000)
     sample_batch_size_per_feed: Optional[int] = Field(default=500, ge=1, le=100_000)
+
+    # Edge-case configuration for Story 1.3
+    late_event_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Probability that an event is emitted late or out-of-order.",
+    )
+    duplicate_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Probability that a duplicate event is emitted for a given logical event.",
+    )
+    missing_step_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Probability that a lifecycle step is dropped or collapsed.",
+    )
+    impossible_duration_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Probability that timestamps are manipulated to create impossible durations.",
+    )
+    courier_offline_rate: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Probability that a courier is marked offline in a way that affects in-flight orders.",
+    )
 
     # Output configuration for Story 1.2 and beyond
     output_base_dir: str = Field(
@@ -55,6 +87,11 @@ class GeneratorConfig(BaseModel):
         "debug_mode_max_events_per_second",
         "debug_mode_max_entity_count",
         "sample_batch_size_per_feed",
+        "late_event_rate",
+        "duplicate_rate",
+        "missing_step_rate",
+        "impossible_duration_rate",
+        "courier_offline_rate",
         mode="before",
     )
     @classmethod
@@ -108,4 +145,29 @@ class GeneratorConfig(BaseModel):
                 seen.add(fmt)
                 unique.append(fmt)
         return unique
+
+    @model_validator(mode="after")
+    def _validate_edge_case_rate_combinations(self) -> "GeneratorConfig":
+        """
+        Validate that the combined edge-case rates are within a sensible range.
+
+        While multiple edge cases can apply to the same logical event, an
+        extremely high combined rate is usually a misconfiguration rather than
+        an intentional teaching scenario.
+        """
+        total_rate = (
+            self.late_event_rate
+            + self.duplicate_rate
+            + self.missing_step_rate
+            + self.impossible_duration_rate
+            + self.courier_offline_rate
+        )
+        # Allow overlapping edge cases, but guard against extreme configurations.
+        if total_rate > 3.0 + 1e-9:
+            raise ValueError(
+                "Combined edge-case rates must not exceed 3.0 "
+                "(300% of events, allowing overlaps). "
+                f"Got total_rate={total_rate!r}."
+            )
+        return self
 

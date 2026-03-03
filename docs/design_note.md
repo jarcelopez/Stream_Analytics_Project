@@ -142,5 +142,53 @@ The Story 1.2 generator produces **baseline** (non edge-case) events:
 - Order events cover the normal lifecycle: created, accepted, assigned, picked up, delivered, cancelled.
 - Courier status events cover ONLINE/OFFLINE/ASSIGNED/EN_ROUTE_* and IDLE states, with optional `active_order_id`.
 
-Edge cases (late, duplicates, missing-step, impossible-duration, courier offline mid-flow) are intentionally not injected here; later stories add those behaviors on top of these schemas using dedicated configuration toggles. Because the baseline schemas and JSON formats already include the necessary keys and timestamps, edge-case events can be introduced without structural schema changes.
+Story 1.3 extends this by adding **configuration-driven edge-case behavior** on top of the same schemas and JSON shapes:
+
+- Configuration fields in `GeneratorConfig` and `config/generator.yaml`:
+  - `late_event_rate`
+  - `duplicate_rate`
+  - `missing_step_rate`
+  - `impossible_duration_rate`
+  - `courier_offline_rate`
+- All rates are probabilities in the [0.0, 1.0] range. A value of `0.0` means “effectively disabled”, providing the **edge-case off switch** required by FR5 / Story 1.3 AC1.
+
+Edge-case encoding rules (JSON and AVRO):
+
+- **Late / out-of-order events**  
+  - Encoding: some `order_events` and `courier_status` records have their `event_time` shifted backwards by a fixed delay (for example 10 minutes), while all other fields remain schema-conformant.  
+  - Purpose: downstream Spark jobs see these as late or out-of-order arrivals purely via `event_time`, matching PRD requirements for event-time semantics and watermarks.
+
+- **Duplicates**  
+  - Encoding: a subset of `order_events` records are duplicated **without changing** identifiers or status fields (same `order_id`, `restaurant_id`, `courier_id`, `zone_id`, `status`), so downstream systems see true logical duplicates.  
+  - Purpose: duplicate handling can be implemented in Spark purely via keys and timestamps; no additional schema fields are required.
+
+- **Missing steps**  
+  - Encoding: a subset of `order_events` are dropped entirely from the stream, resulting in missing lifecycle statuses along an order’s timeline (for example a jump from `ACCEPTED` to `DELIVERED`).  
+  - Purpose: Spark jobs and dashboard logic can detect/teach missing-step sequences solely via gaps in the status progression for a given `order_id`.
+
+- **Impossible durations**  
+  - Encoding: for some delivered orders (`status == "DELIVERED"` with non-null `delivery_time_seconds`), the generator inflates `delivery_time_seconds` to an unrealistic value (for example several hours) while keeping all other fields valid.  
+  - Purpose: anomaly and SLA-breach logic can flag these cases using metrics over `delivery_time_seconds`, again without altering schemas.
+
+- **Courier offline behavior**  
+  - Encoding: a subset of `courier_status` records are forced to `status == "OFFLINE"`, sometimes even when `active_order_id` is non-null.  
+  - Purpose: downstream jobs and dashboards can surface “courier offline with active orders” purely from existing `status` and `active_order_id` fields.
+
+Because all of these behaviors are expressed using existing fields (`event_time`, `status`, `delivery_time_seconds`, `active_order_id`, IDs), **no AVRO schema evolution is required** for Story 1.3; JSON and AVRO remain structurally aligned.
+
+Sample outputs demonstrating each edge case are produced by the generator CLI:
+
+- `python -m stream_analytics.generator.cli --sample --config-path config/generator.yaml`  
+  - With all edge-case rates at `0.0`, produces a **baseline** sample batch per feed.  
+  - With non-zero rates, emits **edge-case-rich** batches that exercise the encodings above.
+- `python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42 --config-path config/generator.yaml`  
+  - Runs the same sample-mode generator in **debug mode**, clamping entity counts to `debug_mode_max_entity_count` and seeding the internal random generators.  
+  - Re-running with the same configuration and `--debug-seed` value yields **reproducible debug batches** suitable for teaching/demo scenarios (within normal randomness guarantees and any future generator extensions).
+
+Tests in `tests/generator/test_serialization_and_two_feeds.py` validate that:
+
+- Baseline and edge-case configurations both produce schema-conformant JSON/AVRO outputs.
+- Enabling edge-case rates changes the distributions as expected (for example more duplicates, more OFFLINE courier statuses, extremely large `delivery_time_seconds` values, and clearly late events due to widened `event_time` ranges), aligning with Story 1.3’s configurable-rate and encoding criteria.
+- Additional focused tests exercise the edge-case helper directly to confirm that non-zero `late_event_rate` and `missing_step_rate` actually shift timestamps and drop some lifecycle events, respectively.
+- Debug-style sample runs seeded via `seed_for_debug` are reproducible when the same configuration and seed are used, supporting Story 1.3’s deterministic debug-run requirement. Edge-case selection currently uses an internal fixed seed, making runs stable even though `--debug-seed` primarily controls the baseline synthetic data rather than the specific edge-case draws.
 

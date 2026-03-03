@@ -58,6 +58,16 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def seed_for_debug(seed: int = 0) -> None:
+    """
+    Seed the internal random generators used for sample data creation.
+
+    This is intended for debug/demo runs where we want reproducible
+    distributions given the same configuration.
+    """
+    fake.seed_instance(seed)
+
+
 def generate_sample_orders(
     zone_count: int,
     restaurant_count: int,
