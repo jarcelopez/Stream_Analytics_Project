@@ -109,3 +109,21 @@ These samples are intended for:
 - Verifying AVRO compatibility using standard tooling.
 - Feeding future Spark ingestion tests that read the JSON/AVRO outputs directly.
 
+### Debug/sample runs and edge cases
+
+For reproducible, teaching-focused sample batches you can enable a debug-style run:
+
+```bash
+python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42
+```
+
+This:
+
+- Uses the same schemas and generators as normal sample runs.
+- Clamps entity-related knobs via `debug_mode_max_entity_count` to keep batches small and easy to inspect.
+- Seeds the generator so that repeating the command with the same configuration and `--debug-seed` yields identical sample outputs.
+
+You can also turn on edge-case behavior by configuring the edge-case rates in `config/generator.yaml` (`late_event_rate`, `duplicate_rate`, `missing_step_rate`, `impossible_duration_rate`, `courier_offline_rate`). Sample runs then produce small, schema-aligned batches that clearly exhibit these patterns while remaining suitable for downstream Spark ingestion tests.
+
+Checked-in JSON and AVRO sample artifacts under `samples/generator/**` provide concrete examples of these batches; see `docs/design_note.md` for a deeper mapping to FR6, FR33, and related generator stories.
+
