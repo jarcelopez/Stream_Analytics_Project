@@ -53,7 +53,7 @@ The generator CLI will merge environment overrides on top of the YAML configurat
 
 ## Running the Generator CLI (Story 1.1)
 
-During Story 1.1, the generator CLI is responsible for loading and validating configuration; later stories will add actual event generation.
+During Story 1.1, the generator CLI is responsible for loading and validating configuration; later stories will add actual event generation. In other words, Story 1.1 fully implements the configuration and validation portions of its acceptance criteria, while the “generator uses those values when producing events” behavior is completed once the generator core is introduced in subsequent stories.
 
 To load and print the resolved configuration:
 

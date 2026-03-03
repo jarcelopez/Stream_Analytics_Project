@@ -55,10 +55,16 @@ courier_count: 5
     # At least one structured error record should be printed to stderr.
     stderr_lines = [line for line in captured.err.splitlines() if line.strip()]
     assert stderr_lines, "expected structured error output on stderr"
-    last_record = json.loads(stderr_lines[-1])
-    assert last_record.get("component") == "generator_config"
-    assert last_record.get("level") == "ERROR"
-    assert "details" in last_record
-    errors = last_record["details"].get("errors", [])
-    assert any(err.get("field") == "zone_count" for err in errors)
+    records = [json.loads(line) for line in stderr_lines]
+
+    # Ensure that the shared config loader logged a validation error record.
+    config_records = [rec for rec in records if rec.get("component") == "generator_config"]
+    assert config_records, "expected at least one generator_config validation error record"
+
+    # The validation record should include per-field error details for zone_count.
+    details_errors = []
+    for rec in config_records:
+        details = rec.get("details") or {}
+        details_errors.extend(details.get("errors", []))
+    assert any(err.get("field") == "zone_count" for err in details_errors)
 

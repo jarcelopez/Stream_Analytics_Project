@@ -48,10 +48,28 @@ def _apply_env_overrides(raw: Dict[str, Any], env_prefix: str) -> Dict[str, Any]
     result: Dict[str, Any] = dict(raw)
     upper_prefix = env_prefix.upper()
 
+    # First, override any existing keys present in the YAML config.
     for key in list(result.keys()):
         env_key = f"{upper_prefix}{key.upper()}"
         if env_key in os.environ:
             result[key] = os.environ[env_key]
+
+    # Then, allow environment variables to introduce additional keys that are
+    # not present in the YAML file (for example EVENTS_PER_SECOND in tests).
+    # This lets env-only settings participate in configuration while still
+    # leaving validation and field selection to the Pydantic model.
+    for env_key, env_value in os.environ.items():
+        if not env_key.startswith(upper_prefix):
+            continue
+        # Strip the prefix and convert the remainder to snake_case-style lower.
+        # For keys like GENERATOR_EVENTS_PER_SECOND this produces
+        # "events_per_second", which matches our config fields.
+        suffix = env_key[len(upper_prefix) :]
+        if not suffix:
+            continue
+        derived_key = suffix.lower()
+        if derived_key not in result:
+            result[derived_key] = env_value
 
     return result
 

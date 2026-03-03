@@ -5,6 +5,8 @@ import json
 import sys
 from typing import Any, Dict
 
+from pydantic import ValidationError
+
 from stream_analytics.common.config import load_typed_config
 from stream_analytics.common.logging_utils import log_error, log_info
 from stream_analytics.generator.config_models import GeneratorConfig
@@ -46,10 +48,21 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = _resolve_config(config_path=args.config_path)
-    except Exception as exc:  # pragma: no cover - surface as structured error
+    except ValidationError:
+        # Validation errors are already logged by the shared config loader
+        # with component="generator_config" and structured per-field details.
+        return 1
+    except FileNotFoundError as exc:  # pragma: no cover - simple configuration error
         log_error(
             component="generator_cli",
-            message="Failed to load generator configuration",
+            message="Generator configuration file not found",
+            details={"error": str(exc), "config_path": args.config_path},
+        )
+        return 1
+    except Exception as exc:  # pragma: no cover - unexpected failure path
+        log_error(
+            component="generator_cli",
+            message="Unexpected error while loading generator configuration",
             details={"error": str(exc), "config_path": args.config_path},
         )
         return 1
@@ -63,6 +76,9 @@ def main(argv: list[str] | None = None) -> int:
             "courier_count": config.courier_count,
             "demand_level": config.demand_level,
             "events_per_second": config.events_per_second,
+            "debug_mode_max_events_per_second": config.debug_mode_max_events_per_second,
+            "debug_mode_max_entity_count": config.debug_mode_max_entity_count,
+            "sample_batch_size_per_feed": config.sample_batch_size_per_feed,
         },
     )
 

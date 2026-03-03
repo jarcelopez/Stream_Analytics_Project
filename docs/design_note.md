@@ -21,8 +21,8 @@ All fields use `snake_case` naming to stay consistent across generator code, Spa
 
 ## Mapping to Functional Requirements (FR1–FR6)
 
-- **FR1 / FR4 – Configurable feeds and parameters**  
-  The `GeneratorConfig` structure captures the primary knobs for feed configuration: entity counts and demand level. By centralising these in a single model and loading mechanism, later stories can wire generator logic and Spark jobs to the same configuration source.
+.- **FR1 / FR4 – Configurable feeds and parameters**  
+  The `GeneratorConfig` structure captures the primary knobs for feed configuration: entity counts and demand level. By centralising these in a single model and loading mechanism, later stories can wire generator logic and Spark jobs to the same configuration source. For Story 1.1 specifically, this implementation covers **configuration and validation only**; the actual event‑generation logic that consumes these values is introduced in later generator stories (for example Story 1.2 and beyond).
 
 - **FR2 / FR3 – Schema-driven generation**  
   While AVRO schemas and dual JSON/AVRO outputs are introduced in later stories, `GeneratorConfig` provides the core dimensional parameters (zones, restaurants, couriers) that those schemas depend on.
@@ -32,6 +32,15 @@ All fields use `snake_case` naming to stay consistent across generator code, Spa
 
 - **FR6 – Sample batches for inspection**  
   `sample_batch_size_per_feed` provides a default for small, inspectable batches, to be used when implementing sample-mode generation in later Milestone 1 stories.
+
+## Notes on Acceptance Criteria Scope (Story 1.1)
+
+Story 1.1 reuses acceptance criteria that describe end‑to‑end behavior (“the generator uses those values when producing events…”). Within this milestone, Story 1.1 is intentionally scoped to:
+
+- Define and validate the configuration surface (`GeneratorConfig`, YAML, env overrides).
+- Fail fast with clear, structured errors when configuration is invalid.
+
+The behavioral aspects of AC1—verifying that emitted events and effective rates match the configured values within documented tolerances—are delivered when the actual generator logic is implemented in subsequent stories. Until then, AC1 should be interpreted as **partially satisfied** from a configuration perspective only.
 
 ## Validation and Error Handling
 
