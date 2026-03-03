@@ -1,0 +1,57 @@
+{
+  "type": "record",
+  "name": "OrderEvent",
+  "namespace": "stream_analytics.generator",
+  "doc": "Baseline order_events feed schema for Story 1.2. Edge-case flags and additional fields can be added in later stories using AVRO-compatible evolution.",
+  "fields": [
+    { "name": "order_id", "type": "string", "doc": "Stable identifier for the order." },
+    { "name": "restaurant_id", "type": "string", "doc": "Identifier of the restaurant preparing the order." },
+    { "name": "courier_id", "type": "string", "doc": "Identifier of the courier assigned to the order (may be empty before assignment)." },
+    { "name": "zone_id", "type": "string", "doc": "Logical delivery zone identifier used for aggregation." },
+    {
+      "name": "event_time",
+      "type": { "type": "long", "logicalType": "timestamp-micros" },
+      "doc": "Event time in microseconds since epoch; used for event-time semantics and windowing."
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "OrderStatus",
+        "symbols": [
+          "CREATED",
+          "ACCEPTED",
+          "ASSIGNED",
+          "PICKED_UP",
+          "DELIVERED",
+          "CANCELLED"
+        ]
+      },
+      "doc": "Order lifecycle status at this event."
+    },
+    {
+      "name": "total_amount",
+      "type": [ "null", "double" ],
+      "default": null,
+      "doc": "Total order amount in currency units; nullable for non-financial status events."
+    },
+    {
+      "name": "delivery_time_seconds",
+      "type": [ "null", "double" ],
+      "default": null,
+      "doc": "If known, realized delivery time in seconds for completed orders; otherwise null."
+    },
+    {
+      "name": "schema_version",
+      "type": "string",
+      "default": "v1",
+      "doc": "Logical schema version to support non-breaking evolution."
+    },
+    {
+      "name": "feed_type",
+      "type": "string",
+      "doc": "Logical feed identifier; always 'order_events' for this schema."
+    }
+  ]
+}
+

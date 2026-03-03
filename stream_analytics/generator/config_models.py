@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+import json
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -26,6 +27,26 @@ class GeneratorConfig(BaseModel):
     debug_mode_max_entity_count: Optional[int] = Field(default=20, ge=1, le=1_000)
     sample_batch_size_per_feed: Optional[int] = Field(default=500, ge=1, le=100_000)
 
+    # Output configuration for Story 1.2 and beyond
+    output_base_dir: str = Field(
+        default="samples/generator",
+        description="Base directory for generator outputs in file/sample modes.",
+    )
+    output_formats: List[Literal["json", "avro"]] = Field(
+        default_factory=lambda: ["json", "avro"],
+        description="Which output formats to produce for each feed.",
+    )
+
+    # Forward-looking placeholders for Event Hubs integration (Story 3.1)
+    event_hubs_order_topic: Optional[str] = Field(
+        default=None,
+        description="Optional Event Hubs topic/name for order_events feed.",
+    )
+    event_hubs_courier_topic: Optional[str] = Field(
+        default=None,
+        description="Optional Event Hubs topic/name for courier_status feed.",
+    )
+
     @field_validator(
         "restaurant_count",
         "courier_count",
@@ -48,4 +69,43 @@ class GeneratorConfig(BaseModel):
                 # Let Pydantic surface a validation error with the original value.
                 return value
         return value
+
+    @field_validator("output_formats")
+    @classmethod
+    def _validate_output_formats(cls, value):  # type: ignore[override]
+        """
+        Validate and normalize output_formats, supporting both YAML lists
+        and JSON/string overrides from environment variables.
+        """
+        allowed = {"json", "avro"}
+
+        # Allow environment-style JSON strings, e.g. '["json"]' or '"json"'.
+        if isinstance(value, str):
+            raw_items: list[str]
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    raw_items = [str(v) for v in parsed]
+                else:
+                    raw_items = [str(parsed)]
+            except Exception:
+                # Fallback to simple comma-separated parsing.
+                raw_items = [v for v in value.split(",")]
+        else:
+            raw_items = list(value or [])
+
+        cleaned = [v.strip().lower() for v in raw_items if v and v.strip()]
+        if not cleaned:
+            raise ValueError("output_formats must contain at least one of: json, avro")
+        invalid = [v for v in cleaned if v not in allowed]
+        if invalid:
+            raise ValueError(f"Unsupported output format(s): {invalid} (allowed: json, avro)")
+        # Preserve order but de-duplicate
+        seen = set()
+        unique: List[str] = []
+        for fmt in cleaned:
+            if fmt not in seen:
+                seen.add(fmt)
+                unique.append(fmt)
+        return unique
 

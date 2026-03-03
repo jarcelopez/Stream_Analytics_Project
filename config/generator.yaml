@@ -20,3 +20,12 @@ debug_mode_max_events_per_second: 100
 debug_mode_max_entity_count: 20
 sample_batch_size_per_feed: 500
 
+## Output configuration for Story 1.2
+##
+## output_base_dir controls where file/sample-mode runs write data by default.
+## output_formats controls which formats are produced per feed.
+output_base_dir: "samples/generator"
+output_formats:
+  - json
+  - avro
+

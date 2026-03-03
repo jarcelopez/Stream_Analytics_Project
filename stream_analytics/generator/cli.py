@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from stream_analytics.common.config import load_typed_config
 from stream_analytics.common.logging_utils import log_error, log_info
+from stream_analytics.generator.base_generators import generate_sample_feeds
 from stream_analytics.generator.config_models import GeneratorConfig
 
 
@@ -31,7 +32,10 @@ def _print_config(config: GeneratorConfig) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Generator CLI entrypoint – loads GeneratorConfig and (for Story 1.1) prints the resolved configuration.",
+        description=(
+            "Generator CLI entrypoint – loads GeneratorConfig and can either "
+            "print the resolved configuration or generate sample feeds."
+        ),
     )
     parser.add_argument(
         "--config-path",
@@ -42,6 +46,22 @@ def main(argv: list[str] | None = None) -> int:
         "--print-config",
         action="store_true",
         help="Print the resolved configuration and exit without generating events.",
+    )
+    parser.add_argument(
+        "--sample",
+        action="store_true",
+        help=(
+            "Generate a small sample batch per feed (order_events and courier_status) "
+            "in JSON and AVRO formats using the current configuration."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help=(
+            "Base directory for generated sample outputs when using --sample. "
+            "If omitted, uses output_base_dir from GeneratorConfig."
+        ),
     )
 
     args = parser.parse_args(argv)
@@ -86,11 +106,21 @@ def main(argv: list[str] | None = None) -> int:
         _print_config(config)
         return 0
 
-    # Story 1.1 stops at configuration; later stories will call into
-    # generator core modules to actually emit events.
+    if args.sample:
+        log_info(
+            component="generator_cli",
+            message="Generating sample feeds for order_events and courier_status.",
+            details={
+                "output_dir": args.output_dir or config.output_base_dir,
+                "output_formats": config.output_formats,
+            },
+        )
+        generate_sample_feeds(config=config, base_output_dir=args.output_dir)
+        return 0
+
     log_info(
         component="generator_cli",
-        message="Configuration resolved; event generation is implemented in later stories.",
+        message="Configuration resolved; no generation mode selected (use --sample or future story modes).",
     )
     return 0
 

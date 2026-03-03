@@ -1,0 +1,49 @@
+{
+  "type": "record",
+  "name": "CourierStatusEvent",
+  "namespace": "stream_analytics.generator",
+  "doc": "Baseline courier_status feed schema for Story 1.2. Edge-case fields can be added in later stories via AVRO evolution.",
+  "fields": [
+    { "name": "courier_id", "type": "string", "doc": "Stable identifier for the courier." },
+    { "name": "zone_id", "type": "string", "doc": "Logical delivery zone identifier used for aggregation." },
+    {
+      "name": "event_time",
+      "type": { "type": "long", "logicalType": "timestamp-micros" },
+      "doc": "Event time in microseconds since epoch; used for event-time semantics and windowing."
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "CourierStatus",
+        "symbols": [
+          "ONLINE",
+          "OFFLINE",
+          "ASSIGNED",
+          "EN_ROUTE_PICKUP",
+          "EN_ROUTE_DROPOFF",
+          "IDLE"
+        ]
+      },
+      "doc": "Courier availability and operational status."
+    },
+    {
+      "name": "active_order_id",
+      "type": [ "null", "string" ],
+      "default": null,
+      "doc": "If the courier is currently assigned, the active order_id; otherwise null."
+    },
+    {
+      "name": "schema_version",
+      "type": "string",
+      "default": "v1",
+      "doc": "Logical schema version to support non-breaking evolution."
+    },
+    {
+      "name": "feed_type",
+      "type": "string",
+      "doc": "Logical feed identifier; always 'courier_status' for this schema."
+    }
+  ]
+}
+
