@@ -14,6 +14,30 @@ from stream_analytics.generator.config_models import GeneratorConfig
 from stream_analytics.generator.entities import seed_for_debug
 
 
+def _resolve_positive_debug_cap(
+    value: int | None,
+    *,
+    default_cap: int,
+    field_name: str,
+) -> int:
+    """
+    Ensure that a debug cap value is positive and fall back to a safe default
+    while emitting a structured log record if configuration is invalid.
+    """
+    if value is None:
+        return default_cap
+
+    if value <= 0:
+        log_error(
+            component="generator_cli",
+            message="Invalid non-positive debug cap configuration; using safe default.",
+            details={"field": field_name, "configured_value": value, "default_cap": default_cap},
+        )
+        return default_cap
+
+    return value
+
+
 def _resolve_config(config_path: str) -> GeneratorConfig:
     return load_typed_config(
         relative_yaml_path=config_path,
@@ -131,16 +155,31 @@ def main(argv: list[str] | None = None) -> int:
         effective_config = config
         if is_debug:
             # In debug mode, clamp entity-related knobs to stay within documented caps.
-            max_entities = config.debug_mode_max_entity_count or config.courier_count
-            clamped_zone_count = min(config.zone_count, max_entities)
-            clamped_restaurant_count = min(config.restaurant_count, max_entities)
-            clamped_courier_count = min(config.courier_count, max_entities)
+            safe_entity_cap = _resolve_positive_debug_cap(
+                config.debug_mode_max_entity_count,
+                default_cap=config.debug_mode_max_entity_count or 20,
+                field_name="debug_mode_max_entity_count",
+            )
+            clamped_zone_count = min(config.zone_count, safe_entity_cap)
+            clamped_restaurant_count = min(config.restaurant_count, safe_entity_cap)
+            clamped_courier_count = min(config.courier_count, safe_entity_cap)
+
+            # Clamp throughput-related configuration as well so that debug runs
+            # stay within the documented low-volume ceiling while remaining
+            # compatible with future streaming stories that use events_per_second.
+            safe_eps_cap = _resolve_positive_debug_cap(
+                config.debug_mode_max_events_per_second,
+                default_cap=config.debug_mode_max_events_per_second or 100,
+                field_name="debug_mode_max_events_per_second",
+            )
+            clamped_events_per_second = min(config.events_per_second, safe_eps_cap)
 
             effective_config = config.model_copy(
                 update={
                     "zone_count": clamped_zone_count,
                     "restaurant_count": clamped_restaurant_count,
                     "courier_count": clamped_courier_count,
+                    "events_per_second": clamped_events_per_second,
                 }
             )
 
@@ -157,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                 "zone_count": effective_config.zone_count,
                 "restaurant_count": effective_config.restaurant_count,
                 "courier_count": effective_config.courier_count,
+                "events_per_second": effective_config.events_per_second,
                 "debug_mode_max_events_per_second": config.debug_mode_max_events_per_second,
                 "debug_mode_max_entity_count": config.debug_mode_max_entity_count,
             },

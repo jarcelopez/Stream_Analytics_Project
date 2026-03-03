@@ -111,7 +111,7 @@ These samples are intended for:
 
 ### Debug/sample runs and edge cases
 
-For reproducible, teaching-focused sample batches you can enable a debug-style run:
+For reproducible, low-volume demo runs you can enable a debug-style run:
 
 ```bash
 python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42
@@ -120,10 +120,39 @@ python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42
 This:
 
 - Uses the same schemas and generators as normal sample runs.
-- Clamps entity-related knobs via `debug_mode_max_entity_count` to keep batches small and easy to inspect.
+- Clamps entity-related knobs via `debug_mode_max_entity_count` to keep batches small and easy to inspect (for example ≤ 20 restaurants and ≤ 20 couriers by default).
+- Clamps the effective `events_per_second` configuration to `min(events_per_second, debug_mode_max_events_per_second)` so that debug settings stay within a documented low-throughput ceiling (default ≤ 100 events/second across feeds); in sample/debug mode this primarily shapes future streaming behavior and sizing while the generator writes a small bounded batch.
 - Seeds the generator so that repeating the command with the same configuration and `--debug-seed` yields identical sample outputs.
 
-You can also turn on edge-case behavior by configuring the edge-case rates in `config/generator.yaml` (`late_event_rate`, `duplicate_rate`, `missing_step_rate`, `impossible_duration_rate`, `courier_offline_rate`). Sample runs then produce small, schema-aligned batches that clearly exhibit these patterns while remaining suitable for downstream Spark ingestion tests.
+On a typical laptop, the default debug configuration produces both feeds and writes JSON/AVRO artifacts in well under a minute, while emitting structured log records (for example `component="generator_cli"` and `component="generator_edge_cases"`) that capture the effective debug settings and batch sizes for graders to inspect.
 
-Checked-in JSON and AVRO sample artifacts under `samples/generator/**` provide concrete examples of these batches; see `docs/design_note.md` for a deeper mapping to FR6, FR33, and related generator stories.
+You can also turn on edge-case behavior by configuring the edge-case rates in `config/generator.yaml` (`late_event_rate`, `duplicate_rate`, `missing_step_rate`, `impossible_duration_rate`, `courier_offline_rate`). In combination with debug-style runs, this gives a quick, one-minute–scale scenario where at least some edge cases are very likely to appear while keeping entity counts and throughput constrained for grading and troubleshooting.
+
+Checked-in JSON and AVRO sample artifacts under `samples/generator/**` provide concrete examples of these batches; see `docs/design_note.md` for a deeper mapping to FR6, FR32, FR33, and related generator stories.
+
+### End-to-end debug demo (AC2)
+
+To exercise the Story 1.5 “Run the generator in debug mode” acceptance criteria end-to-end for the generator and downstream teaching pipeline:
+
+1. **Generate a debug demo batch** (satisfies the generator side of AC2):
+
+   ```bash
+   python -m stream_analytics.generator.cli --config-path config/generator.yaml ^
+       --sample --debug-sample --debug-seed 42 --output-dir samples/generator
+   ```
+
+   - Produces capped, low-volume JSON/AVRO batches for both `order_events` and `courier_status` under `samples/generator/**`.
+   - Keeps effective throughput under the configured debug ceilings so that a full run completes in roughly one minute on a typical laptop.
+
+2. **Feed the debug batch into the streaming pipeline** (once Milestone 2 streaming jobs are wired up):
+
+   - Use the same generator configuration and debug command as above.
+   - Configure Spark Structured Streaming jobs to read from the JSON/AVRO outputs (or the corresponding Event Hubs topics in Milestone 2).
+   - Persist curated outputs to Parquet and point the Streamlit dashboard at those Parquet locations.
+
+3. **Observe edge cases and KPIs in the dashboard**:
+
+   - With non-zero edge-case rates in `config/generator.yaml`, at least one edge-case scenario (late events, duplicates, missing steps, impossible durations, or courier offline with active orders) should be visible during a short debug run.
+   - The debug demo pipeline should be suitable for quick iteration and troubleshooting during grading and live sessions.
+
 
