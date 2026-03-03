@@ -1,0 +1,41 @@
+## Edge-case focused generator configuration for Story 1.6
+##
+## This config is intended for short, reproducible debug/sample runs that
+## surface a rich mix of late/out-of-order, duplicate, missing-step,
+## impossible-duration, and courier-offline behaviors.
+##
+## Usage (from the project root):
+##   python -m stream_analytics.generator.cli ^
+##     --config-path config/generator_edge_cases_demo.yaml ^
+##     --sample ^
+##     --debug-sample ^
+##     --debug-seed 7 ^
+##     --output-dir samples/generator/edge_case_demo
+##
+## The resulting JSON samples can be inspected alongside the curated
+## slices in:
+##   - samples/generator/order_events/json/edge_cases/order_events_edge_cases.jsonl
+##   - samples/generator/courier_status/json/edge_cases/courier_status_edge_cases.jsonl
+
+zone_count: 3
+restaurant_count: 10
+courier_count: 15
+
+demand_level: medium
+events_per_second: 200
+
+debug_mode_max_events_per_second: 100
+debug_mode_max_entity_count: 20
+sample_batch_size_per_feed: 50
+
+late_event_rate: 0.3
+duplicate_rate: 0.4
+missing_step_rate: 0.2
+impossible_duration_rate: 0.4
+courier_offline_rate: 0.4
+
+output_base_dir: "samples/generator"
+output_formats:
+  - json
+  - avro
+

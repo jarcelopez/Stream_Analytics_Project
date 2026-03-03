@@ -1,0 +1,6 @@
+{"courier_id": "courier_offline_1", "zone_id": "zone_1", "event_time": 1772556613807678, "status": "ONLINE", "active_order_id": null, "schema_version": "v1", "feed_type": "courier_status"}
+{"courier_id": "courier_offline_1", "zone_id": "zone_1", "event_time": 1772556614807678, "status": "OFFLINE", "active_order_id": null, "schema_version": "v1", "feed_type": "courier_status"}
+{"courier_id": "courier_offline_1", "zone_id": "zone_1", "event_time": 1772556615807678, "status": "ONLINE", "active_order_id": null, "schema_version": "v1", "feed_type": "courier_status"}
+{"courier_id": "courier_mismatch_1", "zone_id": "zone_2", "event_time": 1772556616807678, "status": "ASSIGNED", "active_order_id": "ord_edge_1", "schema_version": "v1", "feed_type": "courier_status"}
+{"courier_id": "courier_mismatch_1", "zone_id": "zone_2", "event_time": 1772556617807678, "status": "IDLE", "active_order_id": "ord_edge_1", "schema_version": "v1", "feed_type": "courier_status"}
+

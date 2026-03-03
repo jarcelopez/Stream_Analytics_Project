@@ -132,3 +132,49 @@ def test_debug_demo_includes_edge_cases_with_nonzero_rates(tmp_path: Path, monke
     ]
     assert large_durations, "expected some inflated delivery_time_seconds for impossible durations"
 
+
+def test_edge_case_demo_config_produces_observable_edge_cases(tmp_path: Path) -> None:
+    """
+    The Story 1.6 edge-case demo configuration should produce observable edge cases
+    when used in a debug-style sample run.
+    """
+    output_dir = tmp_path / "edge_case_demo"
+
+    exit_code = cli_main(
+        [
+            "--config-path",
+            "config/generator_edge_cases_demo.yaml",
+            "--sample",
+            "--debug-sample",
+            "--debug-seed",
+            "7",
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    assert exit_code == 0
+
+    order_json = output_dir / "order_events" / "json" / "sample.jsonl"
+    courier_json = output_dir / "courier_status" / "json" / "sample.jsonl"
+
+    assert order_json.is_file()
+    assert courier_json.is_file()
+
+    order_records = _load_jsonl(order_json)
+    courier_records = _load_jsonl(courier_json)
+
+    assert order_records, "Expected some order_events records from edge-case demo config"
+    assert courier_records, "Expected some courier_status records from edge-case demo config"
+
+    offline_count = sum(1 for rec in courier_records if rec["status"] == "OFFLINE")
+    assert offline_count > 0
+
+    large_durations = [
+        rec["delivery_time_seconds"]
+        for rec in order_records
+        if rec.get("delivery_time_seconds") is not None
+        and rec["delivery_time_seconds"] > 4 * 60 * 60
+    ]
+    assert large_durations, "expected inflated delivery_time_seconds for impossible durations in edge-case demo config"
+

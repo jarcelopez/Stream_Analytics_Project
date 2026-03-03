@@ -176,6 +176,10 @@ Edge-case encoding rules (JSON and AVRO):
 
 Because all of these behaviors are expressed using existing fields (`event_time`, `status`, `delivery_time_seconds`, `active_order_id`, IDs), **no AVRO schema evolution is required** for Story 1.3; JSON and AVRO remain structurally aligned.
 
+For Story 1.6, these same encodings are documented and illustrated in more depth in:
+
+- `docs/edge_cases.md` – shows concrete JSON examples, how to reproduce edge-case-heavy runs using `config/generator_edge_cases_demo.yaml`, and how each encoding is expected to surface in downstream Spark jobs and dashboard metrics (for example Delivery Time Anomaly Score and Zone Stress Index).
+
 Sample outputs demonstrating each edge case are produced by the generator CLI:
 
 - `python -m stream_analytics.generator.cli --sample --config-path config/generator.yaml`  
