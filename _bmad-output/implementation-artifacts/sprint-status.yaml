@@ -49,7 +49,7 @@ development_status:
   1-4-produce-small-sample-batches-for-inspection: done
   1-5-run-the-generator-in-debug-mode: done
   1-6-inspect-example-events-to-understand-edge-cases: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
   epic-2: backlog
   2-1-write-generator-and-feed-design-note: backlog
