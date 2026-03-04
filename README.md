@@ -25,6 +25,46 @@ pip install -r requirements.txt
 pytest
 ```
 
+## Running the Milestone 1 Generator and Samples
+
+This section is the main entrypoint for Milestone 1 data generation (Story 2.2: “Document How to Run Milestone 1 Generator and Samples”) and is designed so a new student can follow it on a fresh clone without reading source code.
+
+### Prerequisites
+
+- **Python**: 3.10 or newer available on your PATH (`python --version`).
+- **Pip and virtual environments**: `pip` plus either the built-in `venv` module or a tool like `conda` for creating isolated environments.
+- **Git**: To clone this repository.
+- **Optional tooling**: Azure CLI and related cloud tools are not required for Milestone 1 but will be useful in later milestones.
+
+### Create and activate a Python environment
+
+From the project root (`Stream_Analytics_Project`), run one of the following:
+
+- **Using `venv` (recommended)**:
+
+  ```bash
+  python -m venv .venv
+  # On macOS / Linux
+  source .venv/bin/activate
+  # On Windows (PowerShell)
+  .venv\Scripts\Activate.ps1
+  ```
+
+- **Using `conda`** (if you prefer):
+
+  ```bash
+  conda create -n stream_analytics_demo python=3.10
+  conda activate stream_analytics_demo
+  ```
+
+Then install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+At this point you have everything needed to run the generator in **sample** and **debug** modes.
+
 ## Generator Configuration
 
 Core generator parameters live in `config/generator.yaml`. These values drive how many zones, restaurants, and couriers the generator will simulate, along with an overall demand level and events-per-second target for demos.
@@ -46,6 +86,11 @@ output_formats:
   - json
   - avro
 ```
+
+Two important implementation details to keep in mind when inspecting samples:
+
+- **Event times** in the JSON feeds are represented as **microseconds since UNIX epoch (UTC)** in an `event_time` integer field. Downstream Spark jobs will convert this into proper `timestamp` columns and align with the architecture’s ISO-8601 time semantics.
+- **Edge-case rates** (`late_event_rate`, `duplicate_rate`, `missing_step_rate`, `impossible_duration_rate`, `courier_offline_rate`) default to `0.0`, meaning a fresh clone will not emit edge cases until you explicitly turn them on for a debug run.
 
 You can override any of these values using environment variables before running the generator CLI. For example (note that `GENERATOR_OUTPUT_FORMATS` expects a JSON list string):
 
@@ -126,7 +171,38 @@ This:
 
 On a typical laptop, the default debug configuration produces both feeds and writes JSON/AVRO artifacts in well under a minute, while emitting structured log records (for example `component="generator_cli"` and `component="generator_edge_cases"`) that capture the effective debug settings and batch sizes for graders to inspect.
 
-You can also turn on edge-case behavior by configuring the edge-case rates in `config/generator.yaml` (`late_event_rate`, `duplicate_rate`, `missing_step_rate`, `impossible_duration_rate`, `courier_offline_rate`). In combination with debug-style runs, this gives a quick, one-minute–scale scenario where at least some edge cases are very likely to appear while keeping entity counts and throughput constrained for grading and troubleshooting.
+To **observe at least one edge-case scenario within about one minute** on a fresh clone (Story 2.2 AC2), follow this explicit debug recipe:
+
+1. Open `config/generator.yaml` and set non-zero edge-case rates, for example:
+
+   ```yaml
+   late_event_rate: 0.2
+   duplicate_rate: 0.2
+   missing_step_rate: 0.1
+   impossible_duration_rate: 0.1
+   courier_offline_rate: 0.1
+   ```
+
+   These values keep the batch small but make it very likely that at least one event in each category appears in a single debug run.
+
+2. From the project root, run:
+
+   ```bash
+   python -m stream_analytics.generator.cli --config-path config/generator.yaml ^
+       --sample --debug-sample --debug-seed 42 --output-dir samples/generator
+   ```
+
+3. Inspect the outputs under `samples/generator/**`:
+
+   - Use a text editor or JSON viewer on the JSON files to spot:
+     - Negative time shifts (late events) via `event_time` comparisons.
+     - Duplicated `order_id` values.
+     - Gaps in expected lifecycle statuses (missing steps).
+     - Very large `delivery_time_seconds` values (impossible durations).
+     - `courier_status` records where `status="OFFLINE"` but `active_order_id` is non-null.
+   - Use AVRO tools or Python readers to validate that the AVRO files remain schema-compatible even with edge cases applied.
+
+This combination of configuration and command satisfies the Story 2.2 debug-mode acceptance criteria: a new user following these steps will produce a low-volume batch where at least one edge case is observable in well under a minute.
 
 Checked-in JSON and AVRO sample artifacts under `samples/generator/**` provide concrete examples of these batches; see `docs/design_note.md` for a deeper mapping to FR6, FR32, FR33, and related generator stories.
 
