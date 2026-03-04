@@ -51,8 +51,8 @@ development_status:
   1-6-inspect-example-events-to-understand-edge-cases: done
   epic-1-retrospective: done
 
-  epic-2: backlog
-  2-1-write-generator-and-feed-design-note: backlog
+  epic-2: in-progress
+  2-1-write-generator-and-feed-design-note: done
   2-2-document-how-to-run-milestone-1-generator-and-samples: backlog
   epic-2-retrospective: optional
 

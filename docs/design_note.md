@@ -99,7 +99,7 @@ JSON outputs are line-delimited JSON records that mirror the AVRO fields:
 Key conventions:
 
 - All field names are `snake_case`.
-- `event_time` is encoded as an integer microsecond timestamp since epoch (matching the AVRO `timestamp-micros` logical type), which maps cleanly to Spark `timestamp` columns.
+- `event_time` is encoded in both AVRO and JSON as an integer microsecond timestamp since epoch (matching the AVRO `timestamp-micros` logical type). This keeps JSON samples, AVRO records, and schema validation aligned; Spark jobs then cast this long to a `timestamp` column on read, which is a small, intentional deviation from the architecture doc’s generic “ISO 8601 JSON” guidance.
 - Enum fields (`status`) are emitted as their uppercase string symbols.
 - Nullable fields (`total_amount`, `delivery_time_seconds`, `active_order_id`) appear as either a concrete value or `null`.
 - `feed_type` is always `"order_events"` or `"courier_status"` and is present in both AVRO and JSON representations to make routing explicit.
@@ -107,7 +107,7 @@ Key conventions:
 Tests in `tests/generator/test_serialization_and_two_feeds.py` assert:
 
 - Both feeds are present in JSON and AVRO outputs.
-- Required fields exist and are of basic expected types (for example `event_time` is an integer, IDs are strings).
+- Required fields exist and are of basic expected types (for example `event_time` is an integer microsecond timestamp and IDs are strings).
 - `feed_type` separation between feeds is correct.
 
 ### Configuration-Driven Outputs
@@ -196,3 +196,195 @@ Tests in `tests/generator/test_serialization_and_two_feeds.py` validate that:
 - Additional focused tests exercise the edge-case helper directly to confirm that non-zero `late_event_rate` and `missing_step_rate` actually shift timestamps and drop some lifecycle events, respectively.
 - Debug-style sample runs seeded via `seed_for_debug` are reproducible when the same configuration and seed are used, supporting Story 1.3’s deterministic debug-run requirement. Edge-case selection currently uses an internal fixed seed, making runs stable even though `--debug-seed` primarily controls the baseline synthetic data rather than the specific edge-case draws.
 
+## Requirement and NFR Mapping (Story 2.1)
+
+This section makes the requirement traceability from the PRD and architecture document explicit.
+
+- **FR1–FR4 (configurable feeds, schemas, parameters):**  
+  - Covered by **Core Configurable Parameters (Story 1.1)** and **Two-Feed Contracts and Formats (Story 1.2)**, where `GeneratorConfig`, AVRO schemas, and JSON shapes for `order_events` and `courier_status` are defined.
+- **FR5 (edge-case control) and FR6 (sample batches):**  
+  - Addressed in **Baseline vs Edge-Case Behavior** and **Edge-Case Examples by Feed**, plus the sample-mode CLI commands; edge-case rates and sample batch sizes are configuration-driven.
+- **FR32–FR33 (debug mode, observability of edge cases):**  
+  - Supported by debug-related configuration fields (`debug_mode_max_events_per_second`, `debug_mode_max_entity_count`, `sample_batch_size_per_feed`), the deterministic debug CLI (`--debug-sample`, `--debug-seed`), and structured logs in `logs/generator.log` that surface configuration errors and generator behavior.
+- **Documentation FR36–FR37:**  
+  - This design note, together with `docs/edge_cases.md`, forms the primary documentation of feed semantics and edge-case behavior referenced from the PRD and architecture doc.
+
+Non-functional requirements (NFR1–NFR6) relate to the feeds and generator as follows:
+
+- **NFR1–NFR2 (latency and responsiveness):**  
+  - The design keeps schemas compact and uses configuration-driven sampling/output locations so that Streamlit and Spark can read small, time-windowed aggregates efficiently.
+- **NFR3–NFR4 (synthetic, non-PII data and local access):**  
+  - Feed schemas intentionally avoid PII-like fields; IDs (`order_id`, `courier_id`, `restaurant_id`, `zone_id`) are opaque, synthetic identifiers.
+- **NFR5–NFR6 (setup time and robust demo runs):**  
+  - Clear configuration, sample output locations, and documented edge cases are intended to make it possible to set up and run demos quickly, and to interpret failures via structured logs and sample outputs.
+
+## Acceptance Criteria and Test Mapping (Story 2.1)
+
+For quick review, this table maps the Story 2.1 acceptance criteria to sections of this design note and to the most relevant tests:
+
+- **AC1 – Describe feeds, entities, event time, and analytics linkage:**  
+  - Sections: **Two-Feed Contracts and Formats**, **Feed Roles in the Pipeline**, **How the Feeds Support Windows, Joins, and Anomaly Metrics**.  
+  - Tests: `tests/generator/test_serialization_and_two_feeds.py` (feed presence and basic field/type checks).
+- **AC2 – Document and encode edge cases:**  
+  - Sections: **Baseline vs Edge-Case Behavior**, **Edge-Case Examples by Feed**.  
+  - Tests: `tests/generator/test_serialization_and_two_feeds.py` and edge-case-focused tests under `tests/generator/` (where they exercise `late_event_rate`, `duplicate_rate`, `missing_step_rate`, `impossible_duration_rate`, `courier_offline_rate`).
+- **AC3 – Trace FR1–FR6, FR32–FR33 to schema fields and behaviors:**  
+  - Sections: **Mapping to Functional Requirements (FR1–FR6)**, **Baseline vs Edge-Case Behavior**, **Requirement and NFR Mapping (Story 2.1)**.
+- **AC4 – Single source of truth for feed semantics:**  
+  - Sections: all of the above, plus explicit references to AVRO schemas, configuration files, and sample output paths; together they are intended to be sufficient for Milestone 2 Spark and dashboard implementers without re-reading generator internals.
+
+## Feed Roles in the Pipeline (Story 2.1)
+
+This section ties the two feeds and their schemas directly to Milestone 2 analytics, Spark Structured Streaming jobs, and dashboard semantics.
+
+### Order Events Feed (`order_events`)
+
+The `order_events` feed is the primary source of truth for **order lifecycle, revenue, and delivery performance**:
+
+- Keys: `order_id`, `restaurant_id`, `courier_id`, `zone_id`.
+- Event time: `event_time` drives **event-time windows**, watermarks, and late-event handling.
+- Lifecycle: `status` encodes the canonical sequence from `CREATED` → … → `DELIVERED` / `CANCELLED`.
+- Metrics: `total_amount` and `delivery_time_seconds` back revenue and SLA/anomaly metrics.
+- Routing: `feed_type == "order_events"` allows simple routing and feed separation.
+
+Typical Milestone 2 windowed analytics that consume `order_events`:
+
+- Per-zone and per-restaurant order volume per window (count by `zone_id`, `restaurant_id`).
+- Revenue and average basket size per window (aggregations over `total_amount`).
+- Delivery-time KPIs and anomaly scores using distributions of `delivery_time_seconds`.
+- Order lifecycle health checks (e.g. fraction of orders that skip expected statuses).
+
+### Courier Status Feed (`courier_status`)
+
+The `courier_status` feed captures **courier availability and load**, which is critical for Zone Stress Index (ZSI) and similar operational metrics:
+
+- Keys: `courier_id`, `zone_id`.
+- Event time: `event_time` is aligned with `order_events` to enable windowed joins.
+- Status: `status` distinguishes ONLINE/OFFLINE/ASSIGNED/EN_ROUTE_* and IDLE.
+- Relationship: `active_order_id` links a courier to an order when they are busy.
+- Routing: `feed_type == "courier_status"` separates this feed from `order_events`.
+
+Milestone 2 analytics derived from `courier_status` include:
+
+- Online/offline courier counts per zone and time window.
+- Active load per zone (`count(distinct active_order_id)` where `status` is busy-like).
+- Inputs to composite health scores such as **Zone Stress Index (ZSI)**, which typically combines:
+  - Orders-in-progress per zone and window.
+  - Number of ONLINE couriers in the same zone and window.
+  - Historical baselines from previous windows.
+
+### How the Feeds Support Windows, Joins, and Anomaly Metrics
+
+- **Windows**  
+  Both feeds share an `event_time` field (microsecond resolution) that maps cleanly to Spark `timestamp`. Milestone 2 jobs:
+  - Define tumbling or sliding windows on `event_time`.
+  - Apply watermarks to bound late data while still accepting the generator’s late events.
+
+- **Joins**  
+  Joins between feeds and with dimension tables primarily use:
+  - `order_id` ↔ `active_order_id` (tie courier activity to specific orders).
+  - `courier_id` and `zone_id` (join courier load to per-zone demand).
+  - Time-based joins on windowed aggregates (e.g. windowed joins of order KPIs and courier capacity).
+
+- **Anomaly and Health Metrics (incl. ZSI)**  
+  - `delivery_time_seconds` powers long-tail and SLA-breach detection via windowed statistics.
+  - `status` and `active_order_id` support detection of “courier offline with active orders”.
+  - Aggregations over `order_id`, `courier_id`, and `zone_id` feed into ZSI-style scores that combine demand, capacity, and abnormal patterns (e.g. many late orders in zones with few ONLINE couriers).
+
+## Edge-Case Examples by Feed (Story 2.1)
+
+To make the edge-case encodings concrete within this design note (in addition to `docs/edge_cases.md`), this section shows one JSON-shaped example per edge case.
+
+### Late / Out-of-Order Event (Order Events)
+
+```json
+{
+  "order_id": "order-123",
+  "restaurant_id": "rest-42",
+  "courier_id": "courier-7",
+  "zone_id": "zone-1",
+  "event_time": 1700000000000000,
+  "status": "DELIVERED",
+  "total_amount": 32.5,
+  "delivery_time_seconds": 1800.0,
+  "schema_version": "v1",
+  "feed_type": "order_events"
+}
+```
+
+Interpretation: this record may arrive **after** newer events in the stream because the generator deliberately shifts `event_time` backwards for a fraction of orders (`late_event_rate`). Spark jobs treat this solely as a late event based on `event_time`, exercising watermarks and window semantics.
+
+### Duplicate Event (Order Events)
+
+```json
+{
+  "order_id": "order-456",
+  "restaurant_id": "rest-10",
+  "courier_id": "courier-2",
+  "zone_id": "zone-3",
+  "event_time": 1700000100000000,
+  "status": "PICKED_UP",
+  "total_amount": null,
+  "delivery_time_seconds": null,
+  "schema_version": "v1",
+  "feed_type": "order_events"
+}
+```
+
+When duplicated, the generator emits **the same record again** (identical IDs, `event_time`, and `status`). Downstream de-duplication relies on keys and timestamps; no extra schema fields are needed.
+
+### Missing Step (Order Events)
+
+```json
+{
+  "order_id": "order-789",
+  "restaurant_id": "rest-5",
+  "courier_id": "courier-9",
+  "zone_id": "zone-2",
+  "event_time": 1700000200000000,
+  "status": "DELIVERED",
+  "total_amount": 24.0,
+  "delivery_time_seconds": 900.0,
+  "schema_version": "v1",
+  "feed_type": "order_events"
+}
+```
+
+In a missing-step scenario, some intermediate statuses for this `order_id` (for example `ASSIGNED`, `PICKED_UP`) are never emitted due to `missing_step_rate`. Spark jobs detect these cases by analysing gaps in status sequences per order, without any schema changes.
+
+### Impossible Duration (Order Events)
+
+```json
+{
+  "order_id": "order-999",
+  "restaurant_id": "rest-8",
+  "courier_id": "courier-4",
+  "zone_id": "zone-4",
+  "event_time": 1700000300000000,
+  "status": "DELIVERED",
+  "total_amount": 18.0,
+  "delivery_time_seconds": 21600.0,
+  "schema_version": "v1",
+  "feed_type": "order_events"
+}
+```
+
+Here `delivery_time_seconds` is intentionally set to an unrealistic value (for example 6 hours) when `impossible_duration_rate` is non-zero. Anomaly metrics and ZSI-style health indicators consume these extreme values when computing per-zone and per-restaurant distributions.
+
+### Courier Offline with Active Order (Courier Status)
+
+```json
+{
+  "courier_id": "courier-4",
+  "zone_id": "zone-4",
+  "event_time": 1700000305000000,
+  "status": "OFFLINE",
+  "active_order_id": "order-999",
+  "schema_version": "v1",
+  "feed_type": "courier_status"
+}
+```
+
+With `courier_offline_rate` > 0, the generator occasionally emits `status == "OFFLINE"` even when `active_order_id` is non-null. This feeds Milestone 2 health checks and dashboards that surface risky situations such as “offline courier with active orders” and contributes to ZSI and similar metrics.
+
+Together, these examples demonstrate how **all required edge cases** (late, duplicate, missing-step, impossible-duration, courier-offline) are encoded using existing schema fields, enabling Milestone 2 Spark jobs and dashboards to demonstrate correct streaming semantics and anomaly handling without further schema changes.
