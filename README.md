@@ -1,16 +1,114 @@
+---
+title: Stream Analytics Demo Project
+description: Milestone 1 – Streaming data feed design and generation for a synthetic food-delivery platform
+---
+
 # Stream Analytics Demo Project
 
-This project implements a teaching-focused real-time analytics pipeline for a synthetic food-delivery platform.
+A real-time analytics pipeline for a synthetic food-delivery platform. This repository delivers two distinct event feeds, AVRO schemas, and a configurable Python generator that produces sample JSON and AVRO batches.
 
-The architecture centers on:
+## Table of Contents
 
-- A Python generator that produces synthetic order and courier events.
-- Spark Structured Streaming jobs that ingest, validate, and aggregate events into Parquet datasets.
-- A Streamlit dashboard that surfaces KPIs, time-series charts, and anomaly/health views.
+- [1.1 Create Two Feeds](#11-create-two-feeds)
+- [1.2 Schema & Formats](#12-schema--formats)
+- [1.3 Realism Requirements](#13-realism-requirements)
+- [1.4 Deliverables](#14-deliverables)
+- [Quick Start](#quick-start)
+- [Running the Generator](#running-the-generator)
+- [Further Reading](#further-reading)
+- [License](#license)
 
-For now, Story 1.1 focuses purely on configuring the generator; later stories flesh out the rest of the pipeline.
+---
 
-## Setup
+## 1.1 Create Two Feeds
+
+This project designs and implements two distinct streaming data feeds that represent the core operational dynamics of a real-time food-delivery platform:
+
+1. **`order_events`** – Order lifecycle events (created, accepted, assigned, picked up, delivered, cancelled) with timestamps, amounts, and delivery metrics.
+2. **`courier_status`** – Courier availability and position updates (online, offline, assigned, en route, idle) with optional active-order linkage.
+
+### Why These Two Feeds Are Essential
+
+- **Order events** capture the primary business flow: demand, fulfillment, and outcomes. They enable windowed KPIs (order volume, completion rate, cancellation rate), delivery-time analytics, and anomaly detection (impossible durations, missing lifecycle steps).
+- **Courier status** captures supply-side dynamics: who is available, where they are, and whether they are actively delivering. Together with order events, it enables stream-table joins, zone-level stress metrics, and health views (e.g., offline couriers with active orders).
+
+### What Analytics They Enable
+
+- Windowed KPIs: order counts, average delivery time, cancellation rate per zone/restaurant/time window.
+- Event-time processing: watermarks and late-data handling for out-of-order arrivals.
+- Anomaly detection: impossible durations, missing steps, courier-offline mid-delivery scenarios.
+- Zone Stress Index and similar metrics that combine both feeds.
+
+### How Schemas Support Event-Time Processing and Late Data Handling
+
+Both feeds include an `event_time` field (microsecond resolution) that maps to Spark `timestamp` columns. Join identifiers (`order_id`, `restaurant_id`, `courier_id`, `zone_id`) support stream-table joins and reference data patterns. The design note documents how edge cases (late events, duplicates, missing steps, impossible durations, courier offline) are encoded so downstream jobs can apply watermarks and event-time semantics correctly.
+
+---
+
+## 1.2 Schema & Formats
+
+For each feed:
+
+- **AVRO schema** – Defined in `stream_analytics/generator/schemas/` with sensible types, enums, optional fields, and a `schema_version` field for versioning.
+- **Dual output** – Events are generated in both JSON and AVRO.
+- **Event-time fields** – `event_time` (timestamp-micros) for analytics and watermarks.
+- **Join identifiers** – `order_id`, `restaurant_id`, `courier_id`, `zone_id` for stream-table joins and reference data patterns.
+
+| Feed           | Schema File           | Key Fields                                                                 |
+|----------------|-----------------------|----------------------------------------------------------------------------|
+| `order_events` | `order_events.avsc`    | `order_id`, `restaurant_id`, `courier_id`, `zone_id`, `event_time`, `status`, `total_amount`, `delivery_time_seconds` |
+| `courier_status` | `courier_status.avsc` | `courier_id`, `zone_id`, `event_time`, `status`, `active_order_id`        |
+
+---
+
+## 1.3 Realism Requirements
+
+The generator supports:
+
+### Realistic Distributions
+
+- Configurable demand levels (`low`, `medium`, `high`).
+- Zone-level skew via configurable zone, restaurant, and courier counts.
+
+### Configurability
+
+- Number of zones, restaurants, and couriers.
+- Events-per-second target.
+- Demand level.
+- Edge-case rates (see below).
+- Output formats (JSON, AVRO, or both) and output directory.
+
+### Edge Cases for Streaming Correctness
+
+These are critical to demonstrate watermarks and event-time processing later:
+
+| Edge Case              | Config Field              | Description                                                                 |
+|------------------------|---------------------------|-----------------------------------------------------------------------------|
+| Out-of-order (late)    | `late_event_rate`         | Events arrive with timestamps that appear “late” relative to processing order |
+| Duplicates             | `duplicate_rate`          | Same logical event emitted more than once                                   |
+| Missing steps          | `missing_step_rate`       | e.g., delivered without “picked up” in the lifecycle                         |
+| Impossible durations   | `impossible_duration_rate`| Very large `delivery_time_seconds` for anomaly detection                   |
+| Courier offline mid-delivery | `courier_offline_rate` | Courier goes OFFLINE while `active_order_id` is non-null                    |
+
+---
+
+## 1.4 Deliverables
+
+This repository provides:
+
+| Deliverable        | Location                                                                 |
+|--------------------|---------------------------------------------------------------------------|
+| Repository README  | This file: project overview, design rationale, run instructions         |
+| Design note        | [docs/design_note.md](docs/design_note.md): fields, events, assumptions, planned analytics |
+| Feed generator     | Python code in `stream_analytics/generator/`; config in `config/generator.yaml` |
+| AVRO schemas       | `stream_analytics/generator/schemas/order_events.avsc`, `courier_status.avsc` |
+| Sample data        | JSON and AVRO batches under `samples/generator/` (generated via CLI)      |
+
+**Team structure:** Solo developer. Update this section if your project has multiple contributors.
+
+---
+
+## Quick Start
 
 1. Create and activate a virtual environment.
 2. Install dependencies:
@@ -25,155 +123,55 @@ pip install -r requirements.txt
 pytest
 ```
 
-## Running the Milestone 1 Generator and Samples
-
-This section is the main entrypoint for Milestone 1 data generation (Story 2.2: “Document How to Run Milestone 1 Generator and Samples”) and is designed so a new student can follow it on a fresh clone without reading source code.
-
-### Prerequisites
-
-- **Python**: 3.10 or newer available on your PATH (`python --version`).
-- **Pip and virtual environments**: `pip` plus either the built-in `venv` module or a tool like `conda` for creating isolated environments.
-- **Git**: To clone this repository.
-- **Optional tooling**: Azure CLI and related cloud tools are not required for Milestone 1 but will be useful in later milestones.
-
-### Create and activate a Python environment
-
-From the project root (`Stream_Analytics_Project`), run one of the following:
-
-- **Using `venv` (recommended)**:
-
-  ```bash
-  python -m venv .venv
-  # On macOS / Linux
-  source .venv/bin/activate
-  # On Windows (PowerShell)
-  .venv\Scripts\Activate.ps1
-  ```
-
-- **Using `conda`** (if you prefer):
-
-  ```bash
-  conda create -n stream_analytics_demo python=3.10
-  conda activate stream_analytics_demo
-  ```
-
-Then install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-At this point you have everything needed to run the generator in **sample** and **debug** modes.
-
-## Generator Configuration
-
-Core generator parameters live in `config/generator.yaml`. These values drive how many zones, restaurants, and couriers the generator will simulate, along with an overall demand level and events-per-second target for demos.
-
-Example (default demo scenario):
-
-```yaml
-zone_count: 3
-restaurant_count: 10
-courier_count: 15
-demand_level: medium  # one of: low, medium, high
-events_per_second: 50
-debug_mode_max_events_per_second: 100
-debug_mode_max_entity_count: 20
-sample_batch_size_per_feed: 500
-
-output_base_dir: "samples/generator"
-output_formats:
-  - json
-  - avro
-```
-
-Two important implementation details to keep in mind when inspecting samples:
-
-- **Event times** in the JSON feeds are represented as **microseconds since UNIX epoch (UTC)** in an `event_time` integer field. Downstream Spark jobs will convert this into proper `timestamp` columns and align with the architecture’s ISO-8601 time semantics.
-- **Edge-case rates** (`late_event_rate`, `duplicate_rate`, `missing_step_rate`, `impossible_duration_rate`, `courier_offline_rate`) default to `0.0`, meaning a fresh clone will not emit edge cases until you explicitly turn them on for a debug run.
-
-You can override any of these values using environment variables before running the generator CLI. For example (note that `GENERATOR_OUTPUT_FORMATS` expects a JSON list string):
-
-```bash
-export GENERATOR_ZONE_COUNT=6
-export GENERATOR_EVENTS_PER_SECOND=120
-export GENERATOR_OUTPUT_BASE_DIR="data/samples"
-export GENERATOR_OUTPUT_FORMATS='["json"]'
-```
-
-The generator CLI will merge environment overrides on top of the YAML configuration.
-
-## Running the Generator CLI
-
-### Print resolved configuration
-
-To load and print the resolved configuration:
-
-```bash
-python -m stream_analytics.generator.cli --print-config
-```
-
-If configuration is invalid (for example a negative `zone_count` or an unsupported `output_formats` value), the CLI fails fast and emits a structured error describing which fields are invalid.
-
-### Generate sample feeds (Story 1.2)
-
-Story 1.2 adds a sample mode that generates small JSON and AVRO batches for both feeds:
-
-- `order_events`
-- `courier_status`
-
-By default, running:
+4. Generate sample feeds:
 
 ```bash
 python -m stream_analytics.generator.cli --sample
 ```
 
-will:
+---
 
-- Load `GeneratorConfig` from `config/generator.yaml` (plus any `GENERATOR_` env overrides).
-- Use `output_base_dir` and `output_formats` to decide where and how to write data.
-- Produce:
-  - JSON:
-    - `samples/generator/order_events/json/sample.jsonl`
-    - `samples/generator/courier_status/json/sample.jsonl`
-  - AVRO:
-    - `samples/generator/order_events/avro/sample.avro`
-    - `samples/generator/courier_status/avro/sample.avro`
+## Running the Generator
 
-To override the base output directory from the CLI, use:
+### Prerequisites
 
-```bash
-python -m stream_analytics.generator.cli --sample --output-dir data/samples
-```
+- Python 3.10 or newer
+- Pip and a virtual environment (`venv` or `conda`)
+- Git (to clone the repository)
 
-In that case, the same relative layout (`order_events/json`, `courier_status/avro`, etc.) is created under `data/samples/`.
+### Environment Setup
 
-These samples are intended for:
-
-- Quickly inspecting event shapes (JSON files) with a text editor or JSON viewer.
-- Verifying AVRO compatibility using standard tooling.
-- Feeding future Spark ingestion tests that read the JSON/AVRO outputs directly.
-
-### Debug/sample runs and edge cases
-
-For reproducible, low-volume demo runs you can enable a debug-style run:
+From the project root:
 
 ```bash
-python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42
+python -m venv .venv
+# macOS / Linux
+source .venv/bin/activate
+# Windows (PowerShell)
+.venv\Scripts\Activate.ps1
+
+pip install -r requirements.txt
 ```
 
-This:
+### Sample Mode (JSON + AVRO)
 
-- Uses the same schemas and generators as normal sample runs.
-- Clamps entity-related knobs via `debug_mode_max_entity_count` to keep batches small and easy to inspect (for example ≤ 20 restaurants and ≤ 20 couriers by default).
-- Clamps the effective `events_per_second` configuration to `min(events_per_second, debug_mode_max_events_per_second)` so that debug settings stay within a documented low-throughput ceiling (default ≤ 100 events/second across feeds); in sample/debug mode this primarily shapes future streaming behavior and sizing while the generator writes a small bounded batch.
-- Seeds the generator so that repeating the command with the same configuration and `--debug-seed` yields identical sample outputs.
+Produces small batches for both feeds:
 
-On a typical laptop, the default debug configuration produces both feeds and writes JSON/AVRO artifacts in well under a minute, while emitting structured log records (for example `component="generator_cli"` and `component="generator_edge_cases"`) that capture the effective debug settings and batch sizes for graders to inspect.
+```bash
+python -m stream_analytics.generator.cli --sample
+```
 
-To **observe at least one edge-case scenario within about one minute** on a fresh clone (Story 2.2 AC2), follow this explicit debug recipe:
+Outputs:
 
-1. Open `config/generator.yaml` and set non-zero edge-case rates, for example:
+- `samples/generator/order_events/json/sample.jsonl`
+- `samples/generator/order_events/avro/sample.avro`
+- `samples/generator/courier_status/json/sample.jsonl`
+- `samples/generator/courier_status/avro/sample.avro`
+
+
+### Observing Edge Cases
+
+1. Set non-zero edge-case rates in `config/generator.yaml`:
 
    ```yaml
    late_event_rate: 0.2
@@ -183,52 +181,40 @@ To **observe at least one edge-case scenario within about one minute** on a fres
    courier_offline_rate: 0.1
    ```
 
-   These values keep the batch small but make it very likely that at least one event in each category appears in a single debug run.
-
-2. From the project root, run:
+2. Run the generator:
 
    ```bash
-   python -m stream_analytics.generator.cli --config-path config/generator.yaml ^
-       --sample --debug-sample --debug-seed 42 --output-dir samples/generator
+   python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42 --output-dir samples/generator
    ```
 
-3. Inspect the outputs under `samples/generator/**`:
+3. Inspect the JSON/AVRO outputs under `samples/generator/` for late events, duplicates, missing steps, impossible durations, and courier-offline scenarios.
 
-   - Use a text editor or JSON viewer on the JSON files to spot:
-     - Negative time shifts (late events) via `event_time` comparisons.
-     - Duplicated `order_id` values.
-     - Gaps in expected lifecycle statuses (missing steps).
-     - Very large `delivery_time_seconds` values (impossible durations).
-     - `courier_status` records where `status="OFFLINE"` but `active_order_id` is non-null.
-   - Use AVRO tools or Python readers to validate that the AVRO files remain schema-compatible even with edge cases applied.
+### Configuration
 
-This combination of configuration and command satisfies the Story 2.2 debug-mode acceptance criteria: a new user following these steps will produce a low-volume batch where at least one edge case is observable in well under a minute.
+Core parameters live in `config/generator.yaml`. Override via environment variables (prefix `GENERATOR_`):
 
-Checked-in JSON and AVRO sample artifacts under `samples/generator/**` provide concrete examples of these batches; see `docs/design_note.md` for a deeper mapping to FR6, FR32, FR33, and related generator stories.
+```bash
+export GENERATOR_ZONE_COUNT=6
+export GENERATOR_EVENTS_PER_SECOND=120
+export GENERATOR_OUTPUT_BASE_DIR="data/samples"
+export GENERATOR_OUTPUT_FORMATS='["json"]'
+```
 
-### End-to-end debug demo (AC2)
+Print resolved configuration:
 
-To exercise the Story 1.5 “Run the generator in debug mode” acceptance criteria end-to-end for the generator and downstream teaching pipeline:
+```bash
+python -m stream_analytics.generator.cli --print-config
+```
 
-1. **Generate a debug demo batch** (satisfies the generator side of AC2):
+---
 
-   ```bash
-   python -m stream_analytics.generator.cli --config-path config/generator.yaml ^
-       --sample --debug-sample --debug-seed 42 --output-dir samples/generator
-   ```
+## Further Reading
 
-   - Produces capped, low-volume JSON/AVRO batches for both `order_events` and `courier_status` under `samples/generator/**`.
-   - Keeps effective throughput under the configured debug ceilings so that a full run completes in roughly one minute on a typical laptop.
+- [Design note](docs/design_note.md): Feed schemas, assumptions, edge-case encoding, and how the data enables downstream analytics
+- [AVRO schemas](stream_analytics/generator/schemas/): `order_events.avsc` and `courier_status.avsc`
 
-2. **Feed the debug batch into the streaming pipeline** (once Milestone 2 streaming jobs are wired up):
+---
 
-   - Use the same generator configuration and debug command as above.
-   - Configure Spark Structured Streaming jobs to read from the JSON/AVRO outputs (or the corresponding Event Hubs topics in Milestone 2).
-   - Persist curated outputs to Parquet and point the Streamlit dashboard at those Parquet locations.
+## License
 
-3. **Observe edge cases and KPIs in the dashboard**:
-
-   - With non-zero edge-case rates in `config/generator.yaml`, at least one edge-case scenario (late events, duplicates, missing steps, impossible durations, or courier offline with active orders) should be visible during a short debug run.
-   - The debug demo pipeline should be suitable for quick iteration and troubleshooting during grading and live sessions.
-
-
+See the repository for license terms.
