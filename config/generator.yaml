@@ -39,3 +39,17 @@ output_formats:
   - json
   - avro
 
+## Azure Event Hubs integration (Story 3.1)
+##
+## Set the Event Hub names for each feed here, or override via env vars:
+##   GENERATOR_EVENT_HUBS_ORDER_TOPIC=order-events
+##   GENERATOR_EVENT_HUBS_COURIER_TOPIC=courier-status
+##
+## The namespace connection string is always read from the environment:
+##   EVENTHUB_CONNECTION_STRING=Endpoint=sb://<ns>.servicebus.windows.net/;...
+##
+## Leave as null to use the publisher's built-in defaults ("order-events" /
+## "courier-status").
+event_hubs_order_topic: null
+event_hubs_courier_topic: null
+

@@ -12,5 +12,8 @@ python-dateutil==2.9.0.post0
 # Optional: Kafka / Event Hubs (Kafka endpoint) integration
 confluent-kafka==2.6.0
 
+# Azure Event Hubs AMQP publisher
+azure-eventhub==5.13.0
+
 # Tooling & tests
 pytest==8.3.4
