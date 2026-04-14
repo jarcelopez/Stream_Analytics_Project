@@ -14,6 +14,8 @@ from stream_analytics.spark_jobs.windowing import (
     log_batch_watermark_observability,
     log_windowing_startup,
 )
+from stream_analytics.spark_jobs.windowed_kpis import build_windowed_kpi_df
+from stream_analytics.spark_jobs.anomaly_scores import add_zone_stress_metrics
 
 _COMPONENT = "spark_ingestion"
 _SPARK_CONFIG_PATH = "config/spark_jobs.yaml"
@@ -103,7 +105,7 @@ def build_valid_invalid_dataframes(source_df: Any, *, expected_feed_type: str) -
     """
     try:
         from pyspark.sql import functions as F
-        from pyspark.sql.types import LongType, StringType, StructField, StructType
+        from pyspark.sql.types import DoubleType, LongType, StringType, StructField, StructType
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
             "pyspark is required for structured streaming ingestion. Install pyspark to run Spark ingestion jobs."
@@ -120,10 +122,18 @@ def build_valid_invalid_dataframes(source_df: Any, *, expected_feed_type: str) -
                 StructField("order_id", StringType(), True),
                 StructField("restaurant_id", StringType(), True),
                 StructField("courier_id", StringType(), True),
+                StructField("status", StringType(), True),
+                StructField("delivery_time_seconds", DoubleType(), True),
             ]
         )
     else:
-        schema_fields.append(StructField("courier_id", StringType(), True))
+        schema_fields.extend(
+            [
+                StructField("courier_id", StringType(), True),
+                StructField("status", StringType(), True),
+                StructField("active_order_id", StringType(), True),
+            ]
+        )
 
     payload_schema = StructType(schema_fields)
 
@@ -276,6 +286,16 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
             .option("checkpointLocation", f"{cfg.checkpoint_base_dir}/courier_status_observability")
             .start()
         )
+        metrics_df = build_windowed_kpi_df(order_valid_df, courier_valid_df, cfg=cfg)
+        stress_metrics_df = add_zone_stress_metrics(metrics_df, stress_index_threshold=cfg.stress_index_threshold)
+        output_mode = _resolve_file_sink_output_mode(cfg.window_output_mode)
+        metrics_query = (
+            stress_metrics_df.writeStream.outputMode(output_mode)
+            .format("parquet")
+            .option("path", cfg.metrics_sink_path)
+            .option("checkpointLocation", cfg.metrics_checkpoint_dir)
+            .start()
+        )
         error_query = (
             order_invalid_df.unionByName(courier_invalid_df).writeStream.outputMode("append")
             .format("json")
@@ -306,6 +326,9 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
                 "window_duration": cfg.window_duration,
                 "window_slide": cfg.window_slide,
                 "window_output_mode": cfg.window_output_mode,
+                "metrics_sink_path": cfg.metrics_sink_path,
+                "metrics_checkpoint_dir": cfg.metrics_checkpoint_dir,
+                "metrics_output_mode": output_mode,
                 "event_time_timezone": "UTC",
             },
         )
@@ -316,6 +339,7 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
             "courier_windowed_query": courier_windowed_query,
             "order_observability_query": order_observability_query,
             "courier_observability_query": courier_observability_query,
+            "metrics_query": metrics_query,
             "error_query": error_query,
         }
     except Exception:
@@ -533,4 +557,15 @@ def _query_dropped_by_watermark_rows(spark: Any, query_name: str) -> int | None:
             dropped += int(value)
         return dropped if seen else None
     return None
+
+
+def _resolve_file_sink_output_mode(requested_output_mode: str) -> str:
+    if requested_output_mode == "append":
+        return "append"
+    log_info(
+        _COMPONENT,
+        "window_output_mode is not file-sink compatible; using append mode for parquet metrics sink",
+        {"requested_output_mode": requested_output_mode, "fallback_output_mode": "append"},
+    )
+    return "append"
 

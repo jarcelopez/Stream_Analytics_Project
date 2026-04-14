@@ -60,7 +60,7 @@ development_status:
   3-1-publish-feeds-to-azure-event-hubs: done
   3-2-ingest-and-validate-events-with-spark-structured-streaming: done
   3-3-configure-event-time-semantics-watermarks-and-windows: done
-  3-4-compute-and-store-windowed-kpis-and-advanced-metrics: backlog
+  3-4-compute-and-store-windowed-kpis-and-advanced-metrics: done
   3-5-persist-curated-outputs-in-parquet-for-inspection: backlog
   epic-3-retrospective: optional
 

@@ -14,10 +14,14 @@ class SparkIngestionConfig(BaseModel):
 
     checkpoint_base_dir: str = Field(default="checkpoints/spark_jobs", min_length=1)
     error_sink_path: str = Field(default="logs/spark_ingestion_errors.jsonl", min_length=1)
+    metrics_sink_path: str = Field(default="data/metrics_by_zone_restaurant_window", min_length=1)
+    metrics_checkpoint_dir: str = Field(default="checkpoints/spark_jobs/metrics_by_zone_restaurant_window", min_length=1)
     watermark_delay: str = Field(default="10 minutes", min_length=1)
     window_duration: str = Field(default="10 minutes", min_length=1)
     window_slide: str = Field(default="5 minutes", min_length=1)
-    window_output_mode: Literal["append", "update"] = "append"
+    # Parquet file sinks for metrics are append-only in this project setup.
+    window_output_mode: Literal["append"] = "append"
+    stress_index_threshold: float = Field(default=0.75, ge=0.0)
 
     @field_validator(
         "order_event_hub_name",
@@ -25,6 +29,8 @@ class SparkIngestionConfig(BaseModel):
         "consumer_group",
         "checkpoint_base_dir",
         "error_sink_path",
+        "metrics_sink_path",
+        "metrics_checkpoint_dir",
         "watermark_delay",
         "window_duration",
         "window_slide",

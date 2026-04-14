@@ -327,6 +327,59 @@ FROM order_events_windowed_kpis
 ORDER BY window_start DESC;
 ```
 
+### Milestone 2: Windowed KPI and Anomaly Metrics Dataset
+
+Story 3.4 adds a curated denormalized Parquet dataset for dashboard-ready metrics:
+
+- Dataset name/path: `metrics_by_zone_restaurant_window` at `data/metrics_by_zone_restaurant_window`
+- Checkpoint isolation: `checkpoints/spark_jobs/metrics_by_zone_restaurant_window`
+- Canonical dimensions:
+  - `zone_id`
+  - `restaurant_id`
+  - `window_start`
+  - `window_end`
+- Core KPIs:
+  - `active_orders`
+  - `avg_delivery_time_seconds`
+  - `cancellation_rate`
+  - `total_orders`
+- Intermediate/advanced metrics:
+  - `orders_per_active_courier`
+  - `zone_stress_index`
+  - `delivery_time_ratio`
+  - `stress_threshold`
+  - `is_stressed`
+
+#### How To Inspect Curated Metrics
+
+1. Ensure Spark job config includes:
+
+```yaml
+metrics_sink_path: data/metrics_by_zone_restaurant_window
+metrics_checkpoint_dir: checkpoints/spark_jobs/metrics_by_zone_restaurant_window
+stress_index_threshold: 0.75
+```
+
+2. Run ingestion + streaming workload (publisher/generator as in previous milestone sections).
+3. Inspect written Parquet:
+
+```sql
+SELECT
+  zone_id,
+  restaurant_id,
+  window_start,
+  window_end,
+  total_orders,
+  active_orders,
+  avg_delivery_time_seconds,
+  cancellation_rate,
+  orders_per_active_courier,
+  zone_stress_index,
+  is_stressed
+FROM parquet.`data/metrics_by_zone_restaurant_window`
+ORDER BY window_start DESC, zone_id, restaurant_id;
+```
+
 ---
 
 ## Further Reading

@@ -342,3 +342,109 @@ def test_summarize_late_event_handling_includes_and_drops_by_watermark_boundary(
     assert summary["too_late_dropped_records"] == 1
     assert summary["watermark_micros"] == max_event_time - (10 * 60 * 1_000_000)
 
+
+def test_resolve_file_sink_output_mode_falls_back_to_append():
+    assert ingestion_mod._resolve_file_sink_output_mode("append") == "append"
+    assert ingestion_mod._resolve_file_sink_output_mode("update") == "append"
+
+
+def test_run_ingestion_streaming_job_wires_kpi_anomaly_metrics_query(monkeypatch):
+    fake_cfg = SparkIngestionConfig(
+        order_event_hub_name="order-events",
+        courier_event_hub_name="courier-status",
+        consumer_group="$Default",
+        starting_position="latest",
+        checkpoint_base_dir="checkpoints/spark_jobs",
+        error_sink_path="logs/spark_ingestion_errors.jsonl",
+        metrics_sink_path="data/metrics_by_zone_restaurant_window",
+        metrics_checkpoint_dir="checkpoints/spark_jobs/metrics_by_zone_restaurant_window",
+        window_output_mode="append",
+        stress_index_threshold=0.75,
+    )
+
+    class FakeWriter:
+        def __init__(self, label):
+            self.label = label
+            self.calls = []
+
+        def outputMode(self, mode):
+            self.calls.append(("outputMode", mode))
+            return self
+
+        def format(self, fmt):
+            self.calls.append(("format", fmt))
+            return self
+
+        def queryName(self, query_name):
+            self.calls.append(("queryName", query_name))
+            return self
+
+        def option(self, key, value):
+            self.calls.append(("option", key, value))
+            return self
+
+        def foreachBatch(self, callback):
+            self.calls.append(("foreachBatch", callback is not None))
+            return self
+
+        def start(self):
+            self.calls.append(("start", True))
+            return {"query": self.label}
+
+    class FakeDF:
+        def __init__(self, label):
+            self.label = label
+            self.writer = FakeWriter(label)
+
+        @property
+        def writeStream(self):
+            return self.writer
+
+        def unionByName(self, other):
+            return FakeDF(f"{self.label}+{other.label}")
+
+    class FakeConf:
+        def set(self, key, value):
+            return None
+
+    class FakeSpark:
+        def __init__(self):
+            self.conf = FakeConf()
+
+    order_valid = FakeDF("order_valid")
+    order_invalid = FakeDF("order_invalid")
+    courier_valid = FakeDF("courier_valid")
+    courier_invalid = FakeDF("courier_invalid")
+    order_windowed = FakeDF("order_windowed")
+    courier_windowed = FakeDF("courier_windowed")
+    metrics_df = FakeDF("metrics_df")
+    stress_df = FakeDF("stress_df")
+
+    monkeypatch.setattr(ingestion_mod, "load_ingestion_config", lambda: fake_cfg)
+    monkeypatch.setattr(ingestion_mod, "write_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ingestion_mod, "log_windowing_startup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ingestion_mod, "log_info", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ingestion_mod, "create_eventhub_source_df", lambda *args, **kwargs: FakeDF("source"))
+    monkeypatch.setattr(
+        ingestion_mod,
+        "build_valid_invalid_dataframes",
+        lambda _source, expected_feed_type: (order_valid, order_invalid)
+        if expected_feed_type == "order_events"
+        else (courier_valid, courier_invalid),
+    )
+    monkeypatch.setattr(
+        ingestion_mod,
+        "build_windowed_count_df",
+        lambda valid_df, **kwargs: order_windowed if valid_df is order_valid else courier_windowed,
+    )
+    monkeypatch.setattr(ingestion_mod, "build_windowed_kpi_df", lambda *_args, **_kwargs: metrics_df)
+    monkeypatch.setattr(ingestion_mod, "add_zone_stress_metrics", lambda *_args, **_kwargs: stress_df)
+
+    queries = run_ingestion_streaming_job(FakeSpark(), debug_mode=False)
+
+    assert "metrics_query" in queries
+    assert ("outputMode", "append") in stress_df.writer.calls
+    assert ("format", "parquet") in stress_df.writer.calls
+    assert ("option", "path", fake_cfg.metrics_sink_path) in stress_df.writer.calls
+    assert ("option", "checkpointLocation", fake_cfg.metrics_checkpoint_dir) in stress_df.writer.calls
+

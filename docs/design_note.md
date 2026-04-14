@@ -504,3 +504,50 @@ Story 3.3 establishes the event-time contract used by downstream KPI stories:
   - watermark/window configuration,
   - trigger timestamp and batch id,
   - accepted-late vs too-late dropped evidence where measurable from batch event-time distribution.
+
+## Windowed KPI and Advanced Metrics Contract (Story 3.4)
+
+Story 3.4 introduces a curated denormalized output contract for dashboard consumption and Story 3.5 persistence checks.
+
+### Canonical Dataset and Dimensions
+
+- Dataset: `metrics_by_zone_restaurant_window` (Parquet sink configured by `metrics_sink_path`)
+- Checkpoint: `metrics_checkpoint_dir`
+- Grouping keys:
+  - `zone_id`
+  - `restaurant_id`
+  - `window_start`
+  - `window_end`
+
+### Core KPI Definitions
+
+- `total_orders`: distinct `order_id` count per zone/restaurant/window.
+- `active_orders`: distinct `order_id` where status is one of `CREATED`, `ACCEPTED`, `ASSIGNED`, `PICKED_UP`.
+- `avg_delivery_time_seconds`: average `delivery_time_seconds` for records with `status == DELIVERED`.
+- `cancellation_rate`: distinct cancelled orders divided by distinct total orders in the same window.
+
+### Intermediate Stateful Metric
+
+- `orders_per_active_courier`:
+  - Numerator: `total_orders` per zone/restaurant/window from `order_events`.
+  - Denominator: distinct non-`OFFLINE` couriers per zone/window from `courier_status`.
+  - Join strategy: zone/window-level courier capacity is joined onto restaurant-level order aggregates.
+  - Null behavior: null when active courier denominator is zero.
+
+### Advanced Metric and Dashboard Thresholding
+
+- `delivery_time_ratio`: bounded ratio of average delivery time to a 30-minute baseline.
+- `zone_stress_index`: weighted composite score:
+  - `0.40 * cancellation_rate`
+  - `0.35 * delivery_time_ratio`
+  - `0.25 * courier_pressure` (`orders_per_active_courier / 4`, bounded)
+- Thresholding fields for Story 4.3:
+  - `stress_threshold` (configurable via `stress_index_threshold`)
+  - `is_stressed` (boolean: `zone_stress_index >= stress_threshold`)
+
+### Watermark and Sink Semantics
+
+- KPI and courier-capacity aggregations both apply `withWatermark("event_time_ts", watermark_delay)`.
+- File-sink compatibility rule:
+  - Parquet metrics sink writes in `append` mode.
+  - If `window_output_mode` is set to `update`, ingestion logs a fallback and still uses `append` for the Parquet metrics sink to avoid unsupported row-rewrite semantics.
