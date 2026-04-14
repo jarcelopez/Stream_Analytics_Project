@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +17,7 @@ from stream_analytics.spark_jobs.ingestion import (
     run_ingestion_sample,
     split_valid_invalid_records,
 )
+from stream_analytics.spark_jobs.windowing import summarize_late_event_handling
 
 
 def test_load_ingestion_config_requires_connection_string(tmp_path, monkeypatch):
@@ -253,6 +253,15 @@ def test_run_ingestion_streaming_job_writes_error_on_failure(monkeypatch):
         error_sink_path="logs/spark_ingestion_errors.jsonl",
     )
     statuses = []
+    timezone_sets = []
+
+    class FakeConf:
+        def set(self, key, value):
+            timezone_sets.append((key, value))
+
+    class FakeSpark:
+        conf = FakeConf()
+
     monkeypatch.setattr(ingestion_mod, "load_ingestion_config", lambda: fake_cfg)
     monkeypatch.setattr(ingestion_mod, "write_status", lambda status, **kwargs: statuses.append(status))
     monkeypatch.setattr(
@@ -262,7 +271,74 @@ def test_run_ingestion_streaming_job_writes_error_on_failure(monkeypatch):
     )
 
     with pytest.raises(RuntimeError):
-        run_ingestion_streaming_job(SimpleNamespace(), debug_mode=False)
+        run_ingestion_streaming_job(FakeSpark(), debug_mode=False)
 
     assert statuses == ["RUNNING", "ERROR"]
+    assert timezone_sets == [("spark.sql.session.timeZone", "UTC")]
+
+
+def test_query_dropped_by_watermark_rows_reads_progress_metrics():
+    class FakeQuery:
+        def __init__(self, name, last_progress):
+            self.name = name
+            self.lastProgress = last_progress
+
+    class FakeStreams:
+        def __init__(self, active):
+            self.active = active
+
+    class FakeSpark:
+        def __init__(self, active):
+            self.streams = FakeStreams(active)
+
+    spark = FakeSpark(
+        [
+            FakeQuery("not_me", {"stateOperators": [{"numRowsDroppedByWatermark": 2}]}),
+            FakeQuery(
+                "order_events_windowed_kpis",
+                {"stateOperators": [{"numRowsDroppedByWatermark": 3}, {"numRowsDroppedByWatermark": 4}]},
+            ),
+        ]
+    )
+
+    value = ingestion_mod._query_dropped_by_watermark_rows(spark, "order_events_windowed_kpis")
+    assert value == 7
+
+
+def test_spark_ingestion_config_rejects_invalid_window_duration_strings():
+    with pytest.raises(ValueError):
+        SparkIngestionConfig(
+            order_event_hub_name="order-events",
+            courier_event_hub_name="courier-status",
+            watermark_delay="ten minutes",
+            window_duration="10 minutes",
+            window_slide="5 minutes",
+        )
+
+
+def test_spark_ingestion_config_rejects_slide_greater_than_window():
+    with pytest.raises(ValueError):
+        SparkIngestionConfig(
+            order_event_hub_name="order-events",
+            courier_event_hub_name="courier-status",
+            watermark_delay="10 minutes",
+            window_duration="10 minutes",
+            window_slide="11 minutes",
+        )
+
+
+def test_summarize_late_event_handling_includes_and_drops_by_watermark_boundary():
+    max_event_time = 2_000_000_000
+    accepted_late = max_event_time - (5 * 60 * 1_000_000)  # within 10-minute delay
+    too_late = max_event_time - (11 * 60 * 1_000_000)  # beyond 10-minute delay
+    summary = summarize_late_event_handling(
+        [max_event_time, accepted_late, too_late],
+        watermark_delay="10 minutes",
+        window_duration="10 minutes",
+    )
+
+    assert summary["accepted_records"] == 2
+    assert summary["accepted_late_records"] == 1
+    assert summary["too_late_dropped_records"] == 1
+    assert summary["watermark_micros"] == max_event_time - (10 * 60 * 1_000_000)
 

@@ -16,3 +16,9 @@ starting_position: latest
 checkpoint_base_dir: checkpoints/spark_jobs
 error_sink_path: logs/spark_ingestion_errors.jsonl
 
+# Event-time semantics (UTC): convert event_time micros -> event_time_ts timestamp
+watermark_delay: 10 minutes
+window_duration: 10 minutes
+window_slide: 5 minutes
+window_output_mode: append
+

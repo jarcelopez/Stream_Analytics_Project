@@ -289,6 +289,44 @@ $env:SPARK_JOBS_STARTING_POSITION="earliest"
 - **Unexpected replay/no replay:** verify `starting_position` (`latest` vs `earliest`) and checkpoint location.
 - **No records in valid sink:** inspect `logs/spark_ingestion_errors.jsonl` for `reason_code` patterns and malformed payload evidence.
 
+### Milestone 2: Event-Time Windows and Watermark Verification
+
+Story 3.3 introduces explicit event-time semantics for stateful/windowed paths:
+
+- `event_time` (microseconds) is converted to UTC Spark timestamp `event_time_ts`.
+- Watermark/window defaults are configured in `config/spark_jobs.yaml`:
+  - `watermark_delay`
+  - `window_duration`
+  - `window_slide`
+  - `window_output_mode`
+- Windowed memory sinks expose:
+  - `order_events_windowed_kpis`
+  - `courier_status_windowed_kpis`
+- Curated window columns follow `window_start` and `window_end` naming.
+
+#### How To Verify Watermark Behavior
+
+1. Configure event-time window values (or env overrides):
+
+```powershell
+$env:SPARK_JOBS_WATERMARK_DELAY="10 minutes"
+$env:SPARK_JOBS_WINDOW_DURATION="10 minutes"
+$env:SPARK_JOBS_WINDOW_SLIDE="5 minutes"
+```
+
+2. Run Spark ingestion job and publish mixed on-time/late events from generator/publisher.
+3. Inspect structured logs for watermark evidence (`windowing configuration initialized` and `window batch observability`).
+4. Confirm that:
+   - records within lateness threshold are represented in stateful updates,
+   - records older than `max_event_time - watermark_delay` are treated as too-late for windowed aggregation paths.
+5. Query memory tables and verify boundaries:
+
+```sql
+SELECT window_start, window_end, zone_id, feed_type, event_count
+FROM order_events_windowed_kpis
+ORDER BY window_start DESC;
+```
+
 ---
 
 ## Further Reading

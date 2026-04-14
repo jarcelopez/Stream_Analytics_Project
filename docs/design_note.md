@@ -470,3 +470,37 @@ This preserves key analytics/join fields (`order_id`, `courier_id`, `zone_id`, `
   - `last_batch_ts`
   - `debug_mode`
 - This status shape is aligned with architecture conventions used by orchestration and dashboard status views.
+
+## Event-Time Semantics, Watermarks, and Windows (Story 3.3)
+
+Story 3.3 establishes the event-time contract used by downstream KPI stories:
+
+- Canonical event-time conversion in Spark ingestion:
+  - Raw `event_time` remains an integer microsecond epoch for debugging/traceability.
+  - Stateful operations use `event_time_ts` (`timestamp`) derived from `event_time` with UTC semantics.
+- Configuration contract in `config/spark_jobs.yaml` (with `SPARK_JOBS_` overrides):
+  - `watermark_delay`
+  - `window_duration`
+  - `window_slide`
+  - `window_output_mode`
+- Validation is fail-fast:
+  - Duration strings must be `<integer> <unit>` (for example `10 minutes`).
+  - `watermark_delay` and window settings must be positive.
+  - `window_slide` cannot exceed `window_duration`.
+
+### Windowed Aggregation Semantics
+
+- Stateful window paths call `withWatermark("event_time_ts", watermark_delay)` before grouping.
+- Aggregated outputs use canonical naming:
+  - `window_start`
+  - `window_end`
+- This keeps schema compatibility for Story 3.4/3.5 curated outputs and dashboard filters.
+
+### Late-Data Behavior and Observability
+
+- Late events **within** watermark threshold are accepted by stateful windows.
+- Events older than watermark (`max_event_time - watermark_delay`) are too-late for stateful aggregation.
+- Startup and per-batch logs include:
+  - watermark/window configuration,
+  - trigger timestamp and batch id,
+  - accepted-late vs too-late dropped evidence where measurable from batch event-time distribution.

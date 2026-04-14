@@ -8,7 +8,12 @@ from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 from stream_analytics.common.config import load_typed_config
 from stream_analytics.common.logging_utils import log_error, log_info
-from stream_analytics.spark_jobs.config_models import SparkIngestionConfig
+from stream_analytics.spark_jobs.config_models import SparkIngestionConfig, _parse_duration_seconds
+from stream_analytics.spark_jobs.windowing import (
+    build_windowed_count_df,
+    log_batch_watermark_observability,
+    log_windowing_startup,
+)
 
 _COMPONENT = "spark_ingestion"
 _SPARK_CONFIG_PATH = "config/spark_jobs.yaml"
@@ -155,7 +160,14 @@ def build_valid_invalid_dataframes(source_df: Any, *, expected_feed_type: str) -
         )
 
     classified_df = parsed_df.withColumn("reason_code", reason_code)
-    valid_df = classified_df.where(F.col("reason_code").isNull()).select("parsed_payload.*")
+    valid_df = (
+        classified_df.where(F.col("reason_code").isNull())
+        .select("parsed_payload.*")
+        .withColumn(
+            "event_time_ts",
+            F.to_utc_timestamp(F.timestamp_micros(F.col("event_time")), "UTC"),
+        )
+    )
     invalid_df = (
         classified_df.where(F.col("reason_code").isNotNull())
         .select(
@@ -181,6 +193,8 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
     """
     cfg = load_ingestion_config()
     try:
+        # Keep timestamp semantics deterministic for event_time micros -> timestamp conversion.
+        spark.conf.set("spark.sql.session.timeZone", "UTC")
         write_status("RUNNING", debug_mode=debug_mode)
         order_source = create_eventhub_source_df(
             spark,
@@ -201,6 +215,9 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
             expected_feed_type="courier_status",
         )
 
+        order_windowed_df = build_windowed_count_df(order_valid_df, cfg=cfg, feed_name="order_events")
+        courier_windowed_df = build_windowed_count_df(courier_valid_df, cfg=cfg, feed_name="courier_status")
+
         order_valid_query = (
             order_valid_df.writeStream.outputMode("append")
             .format("memory")
@@ -215,12 +232,66 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
             .option("checkpointLocation", f"{cfg.checkpoint_base_dir}/courier_status_valid")
             .start()
         )
+        order_windowed_query = (
+            order_windowed_df.writeStream.outputMode(cfg.window_output_mode)
+            .format("memory")
+            .queryName("order_events_windowed_kpis")
+            .option("checkpointLocation", f"{cfg.checkpoint_base_dir}/order_events_windowed_kpis")
+            .start()
+        )
+        courier_windowed_query = (
+            courier_windowed_df.writeStream.outputMode(cfg.window_output_mode)
+            .format("memory")
+            .queryName("courier_status_windowed_kpis")
+            .option("checkpointLocation", f"{cfg.checkpoint_base_dir}/courier_status_windowed_kpis")
+            .start()
+        )
+        order_observability_query = (
+            order_valid_df.writeStream.outputMode("append")
+            .foreachBatch(
+                lambda batch_df, batch_id: _log_late_data_batch(
+                    batch_df,
+                    batch_id,
+                    "order_events",
+                    cfg,
+                    spark=spark,
+                    window_query_name="order_events_windowed_kpis",
+                )
+            )
+            .option("checkpointLocation", f"{cfg.checkpoint_base_dir}/order_events_observability")
+            .start()
+        )
+        courier_observability_query = (
+            courier_valid_df.writeStream.outputMode("append")
+            .foreachBatch(
+                lambda batch_df, batch_id: _log_late_data_batch(
+                    batch_df,
+                    batch_id,
+                    "courier_status",
+                    cfg,
+                    spark=spark,
+                    window_query_name="courier_status_windowed_kpis",
+                )
+            )
+            .option("checkpointLocation", f"{cfg.checkpoint_base_dir}/courier_status_observability")
+            .start()
+        )
         error_query = (
             order_invalid_df.unionByName(courier_invalid_df).writeStream.outputMode("append")
             .format("json")
             .option("path", cfg.error_sink_path)
             .option("checkpointLocation", f"{cfg.checkpoint_base_dir}/error_sink")
             .start()
+        )
+        log_windowing_startup(
+            cfg=cfg,
+            checkpoint_path=f"{cfg.checkpoint_base_dir}/order_events_windowed_kpis",
+            output_mode=cfg.window_output_mode,
+        )
+        log_windowing_startup(
+            cfg=cfg,
+            checkpoint_path=f"{cfg.checkpoint_base_dir}/courier_status_windowed_kpis",
+            output_mode=cfg.window_output_mode,
         )
 
         log_info(
@@ -231,11 +302,20 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
                 "courier_event_hub_name": cfg.courier_event_hub_name,
                 "checkpoint_base_dir": cfg.checkpoint_base_dir,
                 "error_sink_path": cfg.error_sink_path,
+                "watermark_delay": cfg.watermark_delay,
+                "window_duration": cfg.window_duration,
+                "window_slide": cfg.window_slide,
+                "window_output_mode": cfg.window_output_mode,
+                "event_time_timezone": "UTC",
             },
         )
         return {
             "order_valid_query": order_valid_query,
             "courier_valid_query": courier_valid_query,
+            "order_windowed_query": order_windowed_query,
+            "courier_windowed_query": courier_windowed_query,
+            "order_observability_query": order_observability_query,
+            "courier_observability_query": courier_observability_query,
             "error_query": error_query,
         }
     except Exception:
@@ -361,4 +441,96 @@ def _extract_namespace(conn_str: str) -> str:
             host = endpoint.replace("sb://", "").strip("/")
             return host.split(".servicebus.windows.net")[0]
     raise ValueError("SPARK_EVENTHUB_CONNECTION_STRING must include Endpoint=sb://<namespace>.servicebus.windows.net/")
+
+
+def _log_late_data_batch(
+    batch_df: Any,
+    batch_id: int,
+    feed_name: str,
+    cfg: SparkIngestionConfig,
+    *,
+    spark: Any,
+    window_query_name: str,
+) -> None:
+    summary = _summarize_late_data_batch(batch_df, watermark_delay=cfg.watermark_delay, window_duration=cfg.window_duration)
+    dropped_by_watermark_rows = _query_dropped_by_watermark_rows(spark, window_query_name)
+    log_batch_watermark_observability(
+        feed_name=feed_name,
+        batch_id=batch_id,
+        summary=summary,
+        trigger_ts=_utc_now_iso(),
+        dropped_by_watermark_rows=dropped_by_watermark_rows,
+    )
+
+
+def _summarize_late_data_batch(batch_df: Any, *, watermark_delay: str, window_duration: str) -> Dict[str, int]:
+    from pyspark.sql import functions as F
+
+    stats_row = (
+        batch_df.select("event_time")
+        .where(F.col("event_time").isNotNull())
+        .agg(F.max("event_time").alias("max_event_time_micros"))
+        .collect()[0]
+    )
+    max_event_time = stats_row["max_event_time_micros"]
+    window_duration_micros = _parse_duration_seconds(window_duration) * 1_000_000
+    if max_event_time is None:
+        return {
+            "accepted_records": 0,
+            "accepted_late_records": 0,
+            "too_late_dropped_records": 0,
+            "watermark_micros": 0,
+            "max_event_time_micros": 0,
+            "window_duration_micros": window_duration_micros,
+        }
+
+    watermark_micros = max_event_time - (_parse_duration_seconds(watermark_delay) * 1_000_000)
+    counts_row = (
+        batch_df.select("event_time")
+        .where(F.col("event_time").isNotNull())
+        .agg(
+            F.count("*").alias("total"),
+            F.sum(F.when(F.col("event_time") < F.lit(watermark_micros), F.lit(1)).otherwise(F.lit(0))).alias(
+                "too_late"
+            ),
+            F.sum(
+                F.when(
+                    (F.col("event_time") >= F.lit(watermark_micros)) & (F.col("event_time") < F.lit(max_event_time)),
+                    F.lit(1),
+                ).otherwise(F.lit(0))
+            ).alias("accepted_late"),
+        )
+        .collect()[0]
+    )
+    too_late = int(counts_row["too_late"] or 0)
+    accepted_late = int(counts_row["accepted_late"] or 0)
+    total = int(counts_row["total"] or 0)
+    return {
+        "accepted_records": total - too_late,
+        "accepted_late_records": accepted_late,
+        "too_late_dropped_records": too_late,
+        "watermark_micros": int(watermark_micros),
+        "max_event_time_micros": int(max_event_time),
+        "window_duration_micros": window_duration_micros,
+    }
+
+
+def _query_dropped_by_watermark_rows(spark: Any, query_name: str) -> int | None:
+    for query in getattr(spark.streams, "active", []):
+        if getattr(query, "name", None) != query_name:
+            continue
+        progress = getattr(query, "lastProgress", None) or {}
+        state_operators = progress.get("stateOperators", []) if isinstance(progress, dict) else []
+        dropped = 0
+        seen = False
+        for operator in state_operators:
+            if not isinstance(operator, dict):
+                continue
+            value = operator.get("numRowsDroppedByWatermark")
+            if value is None:
+                continue
+            seen = True
+            dropped += int(value)
+        return dropped if seen else None
+    return None
 
