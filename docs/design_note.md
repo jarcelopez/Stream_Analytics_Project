@@ -388,3 +388,33 @@ Here `delivery_time_seconds` is intentionally set to an unrealistic value (for e
 With `courier_offline_rate` > 0, the generator occasionally emits `status == "OFFLINE"` even when `active_order_id` is non-null. This feeds Milestone 2 health checks and dashboards that surface risky situations such as “offline courier with active orders” and contributes to ZSI and similar metrics.
 
 Together, these examples demonstrate how **all required edge cases** (late, duplicate, missing-step, impossible-duration, courier-offline) are encoded using existing schema fields, enabling Milestone 2 Spark jobs and dashboards to demonstrate correct streaming semantics and anomaly handling without further schema changes.
+
+## Event Hubs Publishing Strategy (Story 3.1)
+
+Story 3.1 adds dual-feed streaming publication to Azure Event Hubs with deterministic partitioning for predictable analytics behavior.
+
+### Feed Routing
+
+- `order_events` feed publishes to the Event Hub resolved from:
+  - `GENERATOR_EVENT_HUBS_ORDER_TOPIC` (env override), otherwise
+  - `event_hubs_order_topic` in `config/generator.yaml`, otherwise
+  - default `order-events`.
+- `courier_status` feed publishes to the Event Hub resolved from:
+  - `GENERATOR_EVENT_HUBS_COURIER_TOPIC` (env override), otherwise
+  - `event_hubs_courier_topic` in `config/generator.yaml`, otherwise
+  - default `courier-status`.
+- Namespace credentials are loaded from `EVENTHUB_CONNECTION_STRING`; malformed or missing values fail fast with structured logs.
+
+### Partition/Keying Rationale
+
+- **Order feed partition key:** `zone_id`  
+  This keeps events from the same zone together, which improves locality for zone-level windowed KPIs and joins.
+- **Courier feed partition key:** `courier_id`  
+  This preserves ordering for each courier timeline, useful for sequencing status transitions.
+- **Trade-off:** deterministic keys improve per-entity ordering but can create hot partitions if one zone/courier dominates traffic. For course/demo throughput this is acceptable; production scaling would monitor partition skew and adapt keying.
+
+### Reliability and Retry Behavior
+
+- Publisher sends events in partition-key-specific batches.
+- If a batch send fails with `EventHubError`, it retries the full batch up to three attempts with short backoff.
+- Structured logs include feed/hub context, partition key, retry attempt, counts, and elapsed time to support troubleshooting and grading evidence.

@@ -51,6 +51,8 @@ from stream_analytics.generator.entities import generate_two_feeds_sample
 
 _COMPONENT = "event_hub_publisher"
 _CONFIG_PATH = "config/generator.yaml"
+_MAX_SEND_RETRIES = 3
+_RETRY_BACKOFF_SECONDS = 1.0
 
 # Defaults used when the YAML / env vars leave the topic names unset.
 _DEFAULT_ORDER_HUB = "order-events"
@@ -97,6 +99,7 @@ def _send_feed(
     producer: EventHubProducerClient,
     events: Iterable[Mapping],
     hub_name: str,
+    feed_type: str,
     dry_run: bool,
 ) -> int:
     """Send all events in *events* to *producer*, batching automatically.
@@ -113,22 +116,44 @@ def _send_feed(
             log_info(_COMPONENT, "dry-run event", {"hub": hub_name, "event": event})
         return len(event_list)
 
-    batch: EventDataBatch = producer.create_batch()
+    current_partition_key: str | None = None
+    batch: EventDataBatch | None = None
     for event in event_list:
+        partition_key = _event_partition_key(event, feed_type)
+        if current_partition_key != partition_key:
+            if batch is not None and len(batch) > 0:  # type: ignore[arg-type]
+                _send_batch_with_retry(
+                    producer,
+                    batch,
+                    hub_name,
+                    current_partition_key or "unknown-key",
+                )
+                total_sent += len(batch)  # type: ignore[arg-type]
+            batch = producer.create_batch(partition_key=partition_key)
+            current_partition_key = partition_key
+
+        assert batch is not None
         payload = EventData(json.dumps(event, default=str))
-        # Use zone_id as the partition key so events from the same zone are
-        # routed to the same partition, preserving per-zone ordering.
         try:
             batch.add(payload)
         except ValueError:
-            # Current batch is full – flush and start a new one.
-            producer.send_batch(batch)
+            _send_batch_with_retry(
+                producer,
+                batch,
+                hub_name,
+                current_partition_key or "unknown-key",
+            )
             total_sent += len(batch)  # type: ignore[arg-type]
-            batch = producer.create_batch()
+            batch = producer.create_batch(partition_key=current_partition_key)
             batch.add(payload)
 
-    if len(batch) > 0:  # type: ignore[arg-type]
-        producer.send_batch(batch)
+    if batch is not None and len(batch) > 0:  # type: ignore[arg-type]
+        _send_batch_with_retry(
+            producer,
+            batch,
+            hub_name,
+            current_partition_key or "unknown-key",
+        )
         total_sent += len(batch)  # type: ignore[arg-type]
 
     return total_sent
@@ -160,6 +185,64 @@ def _build_producer(connection_string: str, hub_name: str) -> EventHubProducerCl
     )
 
 
+def _resolve_hub_name(config_value: str | None, default_name: str, label: str) -> str:
+    resolved = (config_value or default_name).strip()
+    if not resolved:
+        log_error(
+            _COMPONENT,
+            "Event Hub name resolved to an empty value.",
+            {"field": label, "hint": "Set a non-empty value in config or env override."},
+        )
+        sys.exit(1)
+    return resolved
+
+
+def _event_partition_key(event: Mapping, feed_type: str) -> str:
+    if feed_type == "order_events":
+        zone_key = str(event.get("zone_id", "")).strip()
+        if zone_key:
+            return zone_key
+
+    courier_key = str(event.get("courier_id", "")).strip()
+    if courier_key:
+        return courier_key
+
+    zone_key = str(event.get("zone_id", "")).strip()
+    if zone_key:
+        return zone_key
+
+    return "unknown-key"
+
+
+def _send_batch_with_retry(
+    producer: EventHubProducerClient,
+    batch: EventDataBatch,
+    hub_name: str,
+    partition_key: str,
+) -> None:
+    attempt = 1
+    while True:
+        try:
+            producer.send_batch(batch)
+            return
+        except EventHubError as exc:
+            if attempt >= _MAX_SEND_RETRIES:
+                raise
+            log_error(
+                _COMPONENT,
+                "send_batch failed; retrying",
+                {
+                    "hub": hub_name,
+                    "partition_key": partition_key,
+                    "attempt": attempt,
+                    "max_attempts": _MAX_SEND_RETRIES,
+                    "error": str(exc),
+                },
+            )
+            time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+            attempt += 1
+
+
 # ---------------------------------------------------------------------------
 # Core publish logic
 # ---------------------------------------------------------------------------
@@ -184,19 +267,31 @@ def publish_once(
 
     stats: dict = {"orders_sent": 0, "couriers_sent": 0, "errors": []}
 
-    for hub_name, events, stat_key in [
-        (order_hub, order_events, "orders_sent"),
-        (courier_hub, courier_events, "couriers_sent"),
+    for hub_name, events, stat_key, feed_type in [
+        (order_hub, order_events, "orders_sent", "order_events"),
+        (courier_hub, courier_events, "couriers_sent", "courier_status"),
     ]:
         if dry_run:
-            count = _send_feed(None, events, hub_name, dry_run=True)  # type: ignore[arg-type]
+            count = _send_feed(  # type: ignore[arg-type]
+                None,
+                events,
+                hub_name,
+                feed_type,
+                dry_run=True,
+            )
             stats[stat_key] = count
             continue
 
         producer = _build_producer(connection_string, hub_name)
         try:
             with producer:
-                count = _send_feed(producer, events, hub_name, dry_run=False)
+                count = _send_feed(
+                    producer,
+                    events,
+                    hub_name,
+                    feed_type,
+                    dry_run=False,
+                )
                 stats[stat_key] = count
         except EventHubError as exc:
             msg = f"EventHubError while sending to '{hub_name}': {exc}"
@@ -303,11 +398,19 @@ def main(argv: list[str] | None = None) -> None:
     cfg: GeneratorConfig = load_typed_config(
         relative_yaml_path=_CONFIG_PATH,
         model_type=GeneratorConfig,
-        env_prefix="GENERATOR",
+        env_prefix="GENERATOR_",
     )
 
-    order_hub = cfg.event_hubs_order_topic or _DEFAULT_ORDER_HUB
-    courier_hub = cfg.event_hubs_courier_topic or _DEFAULT_COURIER_HUB
+    order_hub = _resolve_hub_name(
+        cfg.event_hubs_order_topic,
+        _DEFAULT_ORDER_HUB,
+        "event_hubs_order_topic",
+    )
+    courier_hub = _resolve_hub_name(
+        cfg.event_hubs_courier_topic,
+        _DEFAULT_COURIER_HUB,
+        "event_hubs_courier_topic",
+    )
 
     connection_string = ""
     if not args.dry_run:

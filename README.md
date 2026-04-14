@@ -206,6 +206,48 @@ Print resolved configuration:
 python -m stream_analytics.generator.cli --print-config
 ```
 
+### Milestone 2: Stream to Azure Event Hubs
+
+Use the publisher module to stream both feeds (`order_events` and `courier_status`) to Azure Event Hubs.
+
+1. Set required credentials and optional hub overrides:
+
+```powershell
+$env:EVENTHUB_CONNECTION_STRING="Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>"
+$env:GENERATOR_EVENT_HUBS_ORDER_TOPIC="order-events"
+$env:GENERATOR_EVENT_HUBS_COURIER_TOPIC="courier-status"
+```
+
+2. Send one batch per feed:
+
+```bash
+python -m stream_analytics.publisher.event_hub_publisher --batch
+```
+
+3. Stream continuously (Ctrl-C to stop):
+
+```bash
+python -m stream_analytics.publisher.event_hub_publisher --continuous
+```
+
+4. Run without Azure I/O to validate generation and logs:
+
+```bash
+python -m stream_analytics.publisher.event_hub_publisher --batch --dry-run
+```
+
+#### Partition/Key Strategy
+
+- `order_events` uses `zone_id` as partition key to keep per-zone ordering and colocate zone analytics.
+- `courier_status` uses `courier_id` as partition key to preserve courier timeline ordering.
+- If a send fails, the publisher retries full batch sends up to three times before surfacing an error.
+
+#### Event Hubs Troubleshooting
+
+- **Auth failures (`Unauthorized`, CBS token errors):** check `EVENTHUB_CONNECTION_STRING` and ensure SAS policy has send rights.
+- **Missing entity / wrong hub name:** verify `GENERATOR_EVENT_HUBS_ORDER_TOPIC` and `GENERATOR_EVENT_HUBS_COURIER_TOPIC` match existing Event Hubs.
+- **Throughput / quota pressure:** reduce `sample_batch_size_per_feed` or `events_per_second`, or increase Event Hubs throughput units/processing units.
+
 ---
 
 ## Further Reading
