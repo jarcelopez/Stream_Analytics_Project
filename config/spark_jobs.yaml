@@ -1,0 +1,18 @@
+## Spark Structured Streaming ingestion defaults (Story 3.2)
+##
+## Secrets are environment-driven and must not be committed:
+##   SPARK_EVENTHUB_CONNECTION_STRING
+##
+## Optional environment overrides use SPARK_JOBS_ prefix, for example:
+##   SPARK_JOBS_ORDER_EVENT_HUB_NAME=order-events
+##   SPARK_JOBS_COURIER_EVENT_HUB_NAME=courier-status
+
+order_event_hub_name: order-events
+courier_event_hub_name: courier-status
+
+consumer_group: $Default
+starting_position: latest
+
+checkpoint_base_dir: checkpoints/spark_jobs
+error_sink_path: logs/spark_ingestion_errors.jsonl
+

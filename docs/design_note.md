@@ -418,3 +418,55 @@ Story 3.1 adds dual-feed streaming publication to Azure Event Hubs with determin
 - Publisher sends events in partition-key-specific batches.
 - If a batch send fails with `EventHubError`, it retries the full batch up to three attempts with short backoff.
 - Structured logs include feed/hub context, partition key, retry attempt, counts, and elapsed time to support troubleshooting and grading evidence.
+
+## Spark Ingestion and Validation Contract (Story 3.2)
+
+Story 3.2 defines the first ingestion contract for Spark Structured Streaming so downstream KPI/window stories consume reliable, typed records while malformed data is isolated.
+
+### Source and Configuration Contract
+
+- Config file: `config/spark_jobs.yaml`
+  - `order_event_hub_name`
+  - `courier_event_hub_name`
+  - `consumer_group`
+  - `starting_position` (`latest` or `earliest`)
+  - `checkpoint_base_dir`
+  - `error_sink_path`
+- Secret source (required): `SPARK_EVENTHUB_CONNECTION_STRING` environment variable.
+- Optional per-field overrides use `SPARK_JOBS_` env prefix.
+- Connection/config errors fail fast during startup; no silent fallback to empty secrets.
+
+### Feed-to-Source Mapping and Expected Payloads
+
+- Event Hub `order_event_hub_name` -> payloads with `feed_type == "order_events"`.
+- Event Hub `courier_event_hub_name` -> payloads with `feed_type == "courier_status"`.
+- Required core fields for both feed paths:
+  - `feed_type`
+  - `event_time` (int microseconds)
+- Required identity fields:
+  - Order feed: `order_id`, `restaurant_id`, `courier_id`, `zone_id`
+  - Courier feed: `courier_id`, `zone_id`
+
+This preserves key analytics/join fields (`order_id`, `courier_id`, `zone_id`, `event_time`) for Stories 3.3 to 3.5.
+
+### Validation and Error Sink Behavior
+
+- Invalid records are isolated with deterministic reason codes:
+  - `parse_error`
+  - `schema_mismatch`
+  - `missing_field`
+  - `invalid_timestamp`
+  - `invalid_feed_type`
+- Error sink format follows structured logging conventions:
+  - `timestamp`, `component`, `level`, `message`, `details`
+  - `details.reason_code`, `details.expected_feed_type`, `details.payload`
+- Invalid records are written to `error_sink_path` and must not block valid-record processing.
+
+### Operational Observability
+
+- Status artifact: `status/spark_job_status.json`
+  - `status`: `RUNNING`, `STOPPED`, `ERROR`
+  - `last_heartbeat_ts`
+  - `last_batch_ts`
+  - `debug_mode`
+- This status shape is aligned with architecture conventions used by orchestration and dashboard status views.

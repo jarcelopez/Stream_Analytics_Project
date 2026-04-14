@@ -248,6 +248,47 @@ python -m stream_analytics.publisher.event_hub_publisher --batch --dry-run
 - **Missing entity / wrong hub name:** verify `GENERATOR_EVENT_HUBS_ORDER_TOPIC` and `GENERATOR_EVENT_HUBS_COURIER_TOPIC` match existing Event Hubs.
 - **Throughput / quota pressure:** reduce `sample_batch_size_per_feed` or `events_per_second`, or increase Event Hubs throughput units/processing units.
 
+### Milestone 2: Spark Ingestion and Validation
+
+Story 3.2 adds a Spark-ingestion contract that keeps stream processing alive while routing invalid records to an error sink.
+
+1. Configure ingestion defaults in `config/spark_jobs.yaml`:
+
+```yaml
+order_event_hub_name: order-events
+courier_event_hub_name: courier-status
+consumer_group: $Default
+starting_position: latest
+checkpoint_base_dir: checkpoints/spark_jobs
+error_sink_path: logs/spark_ingestion_errors.jsonl
+```
+
+2. Set required Event Hubs namespace connection string for Spark:
+
+```powershell
+$env:SPARK_EVENTHUB_CONNECTION_STRING="Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>"
+```
+
+3. Optional overrides (same precedence style as generator config):
+
+```powershell
+$env:SPARK_JOBS_ORDER_EVENT_HUB_NAME="order-events"
+$env:SPARK_JOBS_COURIER_EVENT_HUB_NAME="courier-status"
+$env:SPARK_JOBS_STARTING_POSITION="earliest"
+```
+
+4. Validation behavior:
+   - Valid records continue through ingestion.
+   - Invalid records are written with reason codes such as `parse_error`, `schema_mismatch`, `missing_field`, `invalid_timestamp`, and `invalid_feed_type`.
+   - Status is tracked in `status/spark_job_status.json` with `RUNNING`, `STOPPED`, or `ERROR`.
+
+#### Spark Ingestion Troubleshooting
+
+- **Missing `SPARK_EVENTHUB_CONNECTION_STRING`:** ingestion fails fast during config load.
+- **Wrong Event Hub name:** check `order_event_hub_name` and `courier_event_hub_name` (or `SPARK_JOBS_*` overrides).
+- **Unexpected replay/no replay:** verify `starting_position` (`latest` vs `earliest`) and checkpoint location.
+- **No records in valid sink:** inspect `logs/spark_ingestion_errors.jsonl` for `reason_code` patterns and malformed payload evidence.
+
 ---
 
 ## Further Reading

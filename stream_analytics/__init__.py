@@ -5,5 +5,5 @@ This package will contain the generator, Spark jobs, dashboard,
 and shared utilities as described in the architecture document.
 """
 
-__all__ = ["common", "generator"]
+__all__ = ["common", "generator", "publisher", "spark_jobs"]
 
