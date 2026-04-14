@@ -380,6 +380,19 @@ FROM parquet.`data/metrics_by_zone_restaurant_window`
 ORDER BY window_start DESC, zone_id, restaurant_id;
 ```
 
+4. Run the grader-friendly Python inspector (no source edits required):
+
+```bash
+python -m stream_analytics.spark_jobs.inspect_curated_parquet --path data/metrics_by_zone_restaurant_window --limit 5
+```
+
+This command prints the sampled schema, validates required fields/types, reports KPI value guardrails, and emits a Spark SQL query you can reuse.
+
+5. Expected sink/checkpoint layout:
+   - Data path: `data/metrics_by_zone_restaurant_window/window_start=<...>/part-*.parquet`
+   - Checkpoint path: `checkpoints/spark_jobs/metrics_by_zone_restaurant_window/*`
+   - The two paths must remain isolated to avoid duplicate writes on restart.
+
 ---
 
 ## Further Reading

@@ -294,6 +294,7 @@ def run_ingestion_streaming_job(spark: Any, *, debug_mode: bool = False) -> Dict
             .format("parquet")
             .option("path", cfg.metrics_sink_path)
             .option("checkpointLocation", cfg.metrics_checkpoint_dir)
+            .partitionBy("window_start")
             .start()
         )
         error_query = (

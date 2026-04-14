@@ -551,3 +551,26 @@ Story 3.4 introduces a curated denormalized output contract for dashboard consum
 - File-sink compatibility rule:
   - Parquet metrics sink writes in `append` mode.
   - If `window_output_mode` is set to `update`, ingestion logs a fallback and still uses `append` for the Parquet metrics sink to avoid unsupported row-rewrite semantics.
+- Partitioning/layout contract for curated metrics:
+  - Dataset path remains `metrics_sink_path` (default `data/metrics_by_zone_restaurant_window`).
+  - Streaming writer partitions by `window_start` to keep inspection reads deterministic by window boundary.
+  - Checkpoint state is isolated under `metrics_checkpoint_dir` and must never share folders with parquet data files.
+
+### Curated Parquet Field Mapping (Story 3.5)
+
+The table below is the source-of-truth mapping between metric definitions and persisted Parquet schema fields:
+
+- `zone_id` (string): zone dimension key.
+- `restaurant_id` (string): restaurant dimension key.
+- `window_start` (timestamp): event-time window lower bound (UTC).
+- `window_end` (timestamp): event-time window upper bound (UTC).
+- `total_orders` (long): distinct `order_id` count within the window.
+- `active_orders` (long): distinct active lifecycle orders (`CREATED`, `ACCEPTED`, `ASSIGNED`, `PICKED_UP`).
+- `avg_delivery_time_seconds` (double, nullable): average of delivered `delivery_time_seconds`.
+- `cancellation_rate` (double, 0..1): cancelled distinct orders / total distinct orders.
+- `active_couriers` (long): distinct non-`OFFLINE` couriers by zone/window.
+- `orders_per_active_courier` (double, nullable): `total_orders / active_couriers` when denominator > 0.
+- `delivery_time_ratio` (double, 0..1): bounded delivery-time anomaly ratio.
+- `zone_stress_index` (double, 0..1): weighted composite stress score from Story 3.4.
+- `stress_threshold` (double, 0..1): configured threshold (`stress_index_threshold`).
+- `is_stressed` (boolean): `zone_stress_index >= stress_threshold`.

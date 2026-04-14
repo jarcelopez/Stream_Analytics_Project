@@ -383,6 +383,10 @@ def test_run_ingestion_streaming_job_wires_kpi_anomaly_metrics_query(monkeypatch
             self.calls.append(("option", key, value))
             return self
 
+        def partitionBy(self, *columns):
+            self.calls.append(("partitionBy", columns))
+            return self
+
         def foreachBatch(self, callback):
             self.calls.append(("foreachBatch", callback is not None))
             return self
@@ -447,4 +451,5 @@ def test_run_ingestion_streaming_job_wires_kpi_anomaly_metrics_query(monkeypatch
     assert ("format", "parquet") in stress_df.writer.calls
     assert ("option", "path", fake_cfg.metrics_sink_path) in stress_df.writer.calls
     assert ("option", "checkpointLocation", fake_cfg.metrics_checkpoint_dir) in stress_df.writer.calls
+    assert ("partitionBy", ("window_start",)) in stress_df.writer.calls
 

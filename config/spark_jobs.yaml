@@ -16,7 +16,9 @@ starting_position: latest
 checkpoint_base_dir: checkpoints/spark_jobs
 error_sink_path: logs/spark_ingestion_errors.jsonl
 metrics_sink_path: data/metrics_by_zone_restaurant_window
+# Keep checkpoint isolated from data path (Structured Streaming requirement).
 metrics_checkpoint_dir: checkpoints/spark_jobs/metrics_by_zone_restaurant_window
+# Curated parquet writes are partitioned by window_start for stable grader inspection paths.
 
 # Event-time semantics (UTC): convert event_time micros -> event_time_ts timestamp
 watermark_delay: 10 minutes

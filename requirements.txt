@@ -17,3 +17,7 @@ azure-eventhub==5.13.0
 
 # Tooling & tests
 pytest==8.3.4
+
+# Parquet inspection utilities
+pandas
+pyarrow
