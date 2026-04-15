@@ -68,7 +68,7 @@ development_status:
   4-1-build-core-kpi-and-time-series-dashboard-view: done
   4-2-implement-zone-restaurant-and-time-window-filters: done
   4-3-add-health-and-anomaly-view: done
-  epic-4-retrospective: optional
+  epic-4-retrospective: done
 
   epic-5: backlog
   5-1-start-and-stop-demo-from-the-dashboard: backlog
