@@ -8,4 +8,16 @@ default_time_window: 1h
 health_top_n_default: 10
 health_threshold_default: 0.80
 health_fallback_score_column: cancellation_rate
+status_dir: status
+generator_status_file: generator_status.json
+spark_status_file: spark_job_status.json
+generator_command:
+  - python
+  - -m
+  - stream_analytics.publisher.event_hub_publisher
+  - --continuous
+spark_command:
+  - python
+  - -m
+  - stream_analytics.spark_jobs.ingestion
 

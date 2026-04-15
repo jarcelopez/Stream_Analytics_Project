@@ -10,6 +10,7 @@ from typing import Callable
 from pydantic import BaseModel, Field
 
 from stream_analytics.common.config import load_typed_config
+from stream_analytics.orchestration import DemoRunnerConfig, read_demo_status, start_demo, stop_demo
 
 REQUIRED_COLUMNS = (
     "zone_id",
@@ -37,6 +38,13 @@ class DashboardConfig(BaseModel):
     health_top_n_default: int = Field(default=10, ge=1, le=10)
     health_threshold_default: float = Field(default=0.8, ge=0.0, le=1.0)
     health_fallback_score_column: str = Field(default="cancellation_rate", min_length=1)
+    status_dir: str = Field(default="status", min_length=1)
+    generator_status_file: str = Field(default="generator_status.json", min_length=1)
+    spark_status_file: str = Field(default="spark_job_status.json", min_length=1)
+    generator_command: list[str] = Field(
+        default_factory=lambda: ["python", "-m", "stream_analytics.publisher.event_hub_publisher", "--continuous"]
+    )
+    spark_command: list[str] = Field(default_factory=list)
 
 
 class MetricsCache:
@@ -199,6 +207,7 @@ def run() -> None:
     st.set_page_config(page_title="Stream Analytics Dashboard", layout="wide")
     st.title("Stream Analytics Dashboard")
     st.caption("Curated KPI and health/anomaly views from metrics parquet outputs.")
+    _render_demo_controls(st=st, config=config)
     auto_refresh = st.toggle("Auto-refresh", value=True)
     if auto_refresh:
         _schedule_rerun(st=st, refresh_seconds=config.refresh_seconds)
@@ -219,6 +228,68 @@ def run() -> None:
         _render_overview_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
         return
     _render_health_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
+
+
+def _render_demo_controls(*, st, config: DashboardConfig) -> None:
+    if not callable(getattr(st, "button", None)):
+        return
+
+    st.subheader("Demo Lifecycle")
+    runner_config = DemoRunnerConfig(
+        generator_command=config.generator_command,
+        spark_command=config.spark_command,
+        status_dir=Path(config.status_dir),
+        generator_status_file=config.generator_status_file,
+        spark_status_file=config.spark_status_file,
+    )
+    status_bundle = read_demo_status(runner_config)
+    run_state = status_bundle["overall"]
+    controls_state = _build_demo_controls_state(run_state)
+    st.caption(f"Demo run state: {run_state}")
+
+    c1, c2, c3 = st.columns(3)
+    start_clicked = c1.button("Start Demo", disabled=controls_state["start_disabled"])
+    stop_clicked = c2.button("Stop Demo", disabled=controls_state["stop_disabled"])
+    reset_clicked = c3.button("Reset Demo")
+
+    try:
+        if start_clicked:
+            run_state, message = start_demo(runner_config)
+            _show_run_state_message(st=st, run_state=run_state, message=message)
+        elif stop_clicked:
+            run_state, message = stop_demo(runner_config, reset=False)
+            _show_run_state_message(st=st, run_state=run_state, message=message)
+        elif reset_clicked:
+            run_state, message = stop_demo(runner_config, reset=True)
+            _show_run_state_message(st=st, run_state=run_state, message=message)
+        else:
+            # Keep run-state message visible even when user does not click controls.
+            _show_run_state_message(st=st, run_state=run_state, message=status_bundle["generator"].get("message", ""))
+    except Exception as exc:  # pragma: no cover - UI path
+        _show_run_state_message(
+            st=st,
+            run_state="ERROR",
+            message=f"Demo control failed. Verify dashboard orchestration commands in config/dashboard.yaml. Details: {exc}",
+        )
+
+
+def _build_demo_controls_state(run_state: str) -> dict[str, bool]:
+    normalized = run_state.upper()
+    return {
+        "start_disabled": normalized == "RUNNING",
+        "stop_disabled": normalized == "STOPPED",
+    }
+
+
+def _show_run_state_message(*, st, run_state: str, message: str) -> None:
+    normalized = run_state.upper()
+    text = message or f"Demo state is {normalized}."
+    if normalized == "RUNNING":
+        st.success(text)
+    elif normalized == "ERROR":
+        st.error(text)
+    else:
+        st.info(text)
 
 
 def _assert_required_columns(columns: "pd.Index") -> None:

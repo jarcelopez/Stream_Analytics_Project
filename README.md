@@ -431,6 +431,49 @@ streamlit run stream_analytics/dashboard/app.py
 
 When curated parquet rows are present, the app renders KPIs and chart data. If no parquet data is available yet, the page shows an explicit empty-data message instead of failing.
 
+### Milestone 3: Start/Stop Demo from Dashboard (Story 5.1)
+
+Story 5.1 adds dashboard lifecycle controls for demo orchestration:
+
+- `Start Demo` starts configured generator and Spark commands (idempotent if already running).
+- `Stop Demo` stops managed processes and updates run-state artifacts.
+- `Reset Demo` performs a clean stop and resets batch-timestamp state for a fresh run.
+
+Status artifacts are written under `status/` and consumed by the dashboard run-state banner:
+
+- `status/generator_status.json`
+- `status/spark_job_status.json`
+
+Each artifact keeps a stable schema:
+
+- `status` (`RUNNING`, `STOPPED`, `ERROR`)
+- `last_heartbeat_ts`
+- `last_batch_ts`
+- `debug_mode`
+- `message`
+
+Dashboard orchestration commands are configurable in `config/dashboard.yaml`:
+
+```yaml
+status_dir: status
+generator_command:
+  - python
+  - -m
+  - stream_analytics.publisher.event_hub_publisher
+  - --continuous
+spark_command:
+  - python
+  - -m
+  - stream_analytics.spark_jobs.ingestion
+```
+
+#### Demo Orchestration Troubleshooting
+
+- **Missing config commands:** ensure both `generator_command` and `spark_command` are configured in `config/dashboard.yaml`.
+- **Stale PID files (`status/*.pid`):** use `Reset Demo` to clean stale run state; if needed, delete stale PID files manually.
+- **Status file corruption:** delete the affected status JSON file; the dashboard recreates it with a safe default.
+- **Manual recovery:** stop any stray processes from Task Manager (Windows) and rerun `Start Demo`.
+
 ---
 
 ## Further Reading

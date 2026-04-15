@@ -70,8 +70,8 @@ development_status:
   4-3-add-health-and-anomaly-view: done
   epic-4-retrospective: done
 
-  epic-5: backlog
-  5-1-start-and-stop-demo-from-the-dashboard: backlog
+  epic-5: in-progress
+  5-1-start-and-stop-demo-from-the-dashboard: done
   5-2-display-pipeline-status-and-last-processed-batch: backlog
   5-3-provide-reproducible-demo-run-instructions: backlog
   epic-5-retrospective: optional
