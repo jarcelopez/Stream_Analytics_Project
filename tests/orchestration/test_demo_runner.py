@@ -119,3 +119,74 @@ def test_start_demo_cleans_up_generator_if_spark_spawn_fails(monkeypatch, tmp_pa
     assert "Failed to start demo processes" in message
     assert killed == [777]
     assert not (cfg.status_dir / cfg.generator_pid_file).exists()
+
+
+def test_read_demo_status_populates_missing_last_batch_for_running_spark(tmp_path: Path):
+    cfg = _config(tmp_path)
+    cfg.status_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.status_dir / cfg.generator_status_file).write_text(
+        json.dumps({"status": "RUNNING", "debug_mode": False, "message": "generator ok"}),
+        encoding="utf-8",
+    )
+    (cfg.status_dir / cfg.spark_status_file).write_text(
+        json.dumps({"status": "RUNNING", "debug_mode": False, "last_batch_ts": None, "message": "spark ok"}),
+        encoding="utf-8",
+    )
+
+    status = read_demo_status(cfg)
+    assert status["spark"]["status"] == "RUNNING"
+    assert status["spark"]["last_batch_ts"] is not None
+    assert "approximated from dashboard heartbeat" in status["spark"]["message"]
+
+
+def test_read_demo_status_refreshes_heartbeat_approximate_last_batch(monkeypatch, tmp_path: Path):
+    cfg = _config(tmp_path)
+    cfg.status_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.status_dir / cfg.generator_status_file).write_text(
+        json.dumps({"status": "RUNNING", "debug_mode": False, "message": "generator ok"}),
+        encoding="utf-8",
+    )
+    (cfg.status_dir / cfg.spark_status_file).write_text(
+        json.dumps(
+            {
+                "status": "RUNNING",
+                "debug_mode": False,
+                "last_batch_ts": None,
+                "message": "spark ok",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    heartbeat_values = iter(
+        [
+            "2026-04-15T10:00:00+00:00",
+            "2026-04-15T10:00:10+00:00",
+            "2026-04-15T10:00:20+00:00",
+            "2026-04-15T10:00:30+00:00",
+        ]
+    )
+    monkeypatch.setattr("stream_analytics.orchestration.demo_runner.utc_now_iso", lambda: next(heartbeat_values))
+
+    first = read_demo_status(cfg)
+    second = read_demo_status(cfg)
+
+    assert first["spark"]["last_batch_ts"] == "2026-04-15T10:00:00+00:00"
+    assert second["spark"]["last_batch_ts"] == "2026-04-15T10:00:10+00:00"
+
+
+def test_read_demo_status_preserves_existing_last_batch_timestamp(tmp_path: Path):
+    cfg = _config(tmp_path)
+    cfg.status_dir.mkdir(parents=True, exist_ok=True)
+    existing_ts = "2026-04-15T09:59:59+00:00"
+    (cfg.status_dir / cfg.generator_status_file).write_text(
+        json.dumps({"status": "RUNNING", "debug_mode": False, "message": "generator ok"}),
+        encoding="utf-8",
+    )
+    (cfg.status_dir / cfg.spark_status_file).write_text(
+        json.dumps({"status": "RUNNING", "debug_mode": False, "last_batch_ts": existing_ts, "message": "spark ok"}),
+        encoding="utf-8",
+    )
+
+    status = read_demo_status(cfg)
+    assert status["spark"]["last_batch_ts"] == existing_ts

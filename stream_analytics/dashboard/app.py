@@ -223,11 +223,14 @@ def run() -> None:
         st.info("No metrics data available yet. Once Spark writes curated parquet outputs, KPIs and charts will appear here.")
         return
 
-    page_name = st.selectbox("Page", ["Overview", "Health/Anomalies"], index=0, key="dashboard_page")
+    page_name = st.selectbox("Page", ["Overview", "Health/Anomalies", "Debug/Status"], index=0, key="dashboard_page")
     if page_name == "Overview":
         _render_overview_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
         return
-    _render_health_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
+    if page_name == "Health/Anomalies":
+        _render_health_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
+        return
+    _render_debug_status_page(st=st, refresh_seconds=config.refresh_seconds, auto_refresh=auto_refresh)
 
 
 def _render_demo_controls(*, st, config: DashboardConfig) -> None:
@@ -271,6 +274,9 @@ def _render_demo_controls(*, st, config: DashboardConfig) -> None:
             run_state="ERROR",
             message=f"Demo control failed. Verify dashboard orchestration commands in config/dashboard.yaml. Details: {exc}",
         )
+    # Re-read status files after action handling so status widgets reflect current state.
+    status_bundle = read_demo_status(runner_config)
+    _render_pipeline_status(st=st, status_bundle=status_bundle)
 
 
 def _build_demo_controls_state(run_state: str) -> dict[str, bool]:
@@ -290,6 +296,69 @@ def _show_run_state_message(*, st, run_state: str, message: str) -> None:
         st.error(text)
     else:
         st.info(text)
+
+
+def _render_pipeline_status(*, st, status_bundle: dict[str, dict[str, str]]) -> None:
+    st.subheader("Pipeline Status")
+    generator_status = status_bundle["generator"]
+    spark_status = status_bundle["spark"]
+    c1, c2 = st.columns(2)
+
+    c1.metric("Generator", _status_badge_text(generator_status.get("status", "STOPPED")))
+    c1.caption(generator_status.get("message") or "No generator status message available.")
+
+    c2.metric("Spark Streaming", _status_badge_text(spark_status.get("status", "STOPPED")))
+    c2.caption(spark_status.get("message") or "No Spark status message available.")
+
+    batch_value, batch_age = _format_last_batch_display(spark_status.get("last_batch_ts"))
+    c3, c4 = st.columns(2)
+    c3.metric("Last Processed Batch", batch_value)
+    c4.metric("Batch Age", batch_age)
+
+
+def _render_debug_status_page(*, st, refresh_seconds: int, auto_refresh: bool) -> None:
+    st.subheader("Debug / Status")
+    st.caption(
+        f"Status is refreshed every {max(int(refresh_seconds), 1)}s when auto-refresh is "
+        f"{'enabled' if auto_refresh else 'disabled'}."
+    )
+
+
+def _status_badge_text(status: str) -> str:
+    normalized = str(status or "STOPPED").upper()
+    if normalized == "RUNNING":
+        return "RUNNING"
+    if normalized == "ERROR":
+        return "ERROR"
+    return "STOPPED"
+
+
+def _parse_status_timestamp(raw_ts: str | None) -> datetime | None:
+    if not raw_ts:
+        return None
+    normalized = raw_ts.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _format_last_batch_display(last_batch_ts: str | None, *, now_utc: datetime | None = None) -> tuple[str, str]:
+    parsed = _parse_status_timestamp(last_batch_ts)
+    if parsed is None:
+        return "Waiting for first batch", "n/a"
+    reference_now = now_utc or datetime.now(UTC)
+    age_seconds = max(0, int((reference_now - parsed).total_seconds()))
+    utc_text = parsed.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    local_text = parsed.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    return f"{utc_text} | {local_text}", f"{age_seconds}s ago"
 
 
 def _assert_required_columns(columns: "pd.Index") -> None:

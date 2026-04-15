@@ -9,6 +9,8 @@ from typing import Any
 
 from stream_analytics.orchestration.status_files import read_status_file, utc_now_iso, write_status_file
 
+_HEARTBEAT_APPROX_MARKER = "[source:heartbeat-approx]"
+
 
 @dataclass(frozen=True)
 class DemoRunnerConfig:
@@ -23,6 +25,7 @@ class DemoRunnerConfig:
 
 
 def read_demo_status(config: DemoRunnerConfig) -> dict[str, Any]:
+    _refresh_runtime_status(config)
     generator = read_status_file(config.status_dir / config.generator_status_file)
     spark = read_status_file(config.status_dir / config.spark_status_file)
     overall = derive_run_state(generator["status"], spark["status"])
@@ -116,6 +119,47 @@ def stop_demo(config: DemoRunnerConfig, *, reset: bool = False) -> tuple[str, st
         message=message,
     )
     return "STOPPED", message
+
+
+def _refresh_runtime_status(config: DemoRunnerConfig) -> None:
+    now_ts = utc_now_iso()
+    generator_path = config.status_dir / config.generator_status_file
+    spark_path = config.status_dir / config.spark_status_file
+
+    generator = read_status_file(generator_path)
+    spark = read_status_file(spark_path)
+
+    if str(generator.get("status", "")).upper() == "RUNNING":
+        write_status_file(
+            generator_path,
+            status="RUNNING",
+            debug_mode=bool(generator.get("debug_mode", config.debug_mode)),
+            last_batch_ts=generator.get("last_batch_ts"),
+            message=str(generator.get("message") or "Generator process is running."),
+        )
+
+    if str(spark.get("status", "")).upper() != "RUNNING":
+        return
+
+    existing_batch_ts = spark.get("last_batch_ts")
+    spark_message = str(spark.get("message") or "Spark process is running.")
+    approximation_active = _HEARTBEAT_APPROX_MARKER in spark_message
+    if not existing_batch_ts or approximation_active:
+        existing_batch_ts = now_ts
+        if not approximation_active:
+            approximation_note = (
+                "Last batch timestamp approximated from dashboard heartbeat "
+                "(checkpoint timestamp unavailable)."
+            )
+            spark_message = f"{spark_message} {approximation_note} {_HEARTBEAT_APPROX_MARKER}".strip()
+
+    write_status_file(
+        spark_path,
+        status="RUNNING",
+        debug_mode=bool(spark.get("debug_mode", config.debug_mode)),
+        last_batch_ts=existing_batch_ts,
+        message=spark_message,
+    )
 
 
 def _validate_start_config(config: DemoRunnerConfig) -> None:

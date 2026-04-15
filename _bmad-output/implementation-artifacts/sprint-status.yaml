@@ -72,7 +72,7 @@ development_status:
 
   epic-5: in-progress
   5-1-start-and-stop-demo-from-the-dashboard: done
-  5-2-display-pipeline-status-and-last-processed-batch: backlog
+  5-2-display-pipeline-status-and-last-processed-batch: done
   5-3-provide-reproducible-demo-run-instructions: backlog
   epic-5-retrospective: optional
 

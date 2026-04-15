@@ -474,6 +474,26 @@ spark_command:
 - **Status file corruption:** delete the affected status JSON file; the dashboard recreates it with a safe default.
 - **Manual recovery:** stop any stray processes from Task Manager (Windows) and rerun `Start Demo`.
 
+### Milestone 3: Pipeline Status and Last Processed Batch (Story 5.2)
+
+Story 5.2 extends the dashboard debug/status experience with runtime observability:
+
+- Explicit per-process state badges for generator and Spark (`RUNNING`, `STOPPED`, `ERROR`).
+- `Last Processed Batch` rendered from `status/spark_job_status.json:last_batch_ts` using UTC + local time display.
+- `Batch Age` indicator (seconds since last processed batch) to quickly detect stale pipelines.
+
+Expected status refresh cadence:
+
+- Dashboard auto-refresh should be enabled and configured to 10-15 seconds (`refresh_seconds` in `config/dashboard.yaml`).
+- While Spark is running, heartbeat updates continue and `last_batch_ts` is shown as the latest known batch progress.
+- If checkpoint-derived batch timestamps are unavailable, the system uses a heartbeat approximation and documents it in the Spark status message.
+
+#### Pipeline Status Troubleshooting
+
+- **Spark shown RUNNING but stale `Batch Age`:** verify Spark ingestion process is healthy and check `status/spark_job_status.json` `message` field for checkpoint/heartbeat hints.
+- **`Waiting for first batch` persists:** confirm data is actually flowing through Event Hubs and Spark has begun processing; this state is non-fatal before first batch.
+- **Unexpected `ERROR` badge:** inspect `message` in the affected status file first, then use `Reset Demo` and retry `Start Demo`.
+
 ---
 
 ## Further Reading
