@@ -6,8 +6,8 @@
 ## All keys are snake_case to match the architecture conventions.
 
 zone_count: 3
-restaurant_count: 10
-courier_count: 15
+restaurant_count: 50
+courier_count: 100
 
 ## Logical demand level for docs / UX
 demand_level: medium  # one of: low, medium, high
@@ -24,11 +24,11 @@ sample_batch_size_per_feed: 500
 ##
 ## Rates are expressed as probabilities in the range [0.0, 1.0].
 ## A value of 0.0 means the edge case is effectively disabled.
-late_event_rate: 0.0
-duplicate_rate: 0.0
-missing_step_rate: 0.0
-impossible_duration_rate: 0.0
-courier_offline_rate: 0.0
+late_event_rate: 0.2
+duplicate_rate: 0.1
+missing_step_rate: 0.1
+impossible_duration_rate: 0.1
+courier_offline_rate: 0.1
 
 ## Output configuration for Story 1.2
 ##
@@ -48,8 +48,6 @@ output_formats:
 ## The namespace connection string is always read from the environment:
 ##   EVENTHUB_CONNECTION_STRING=Endpoint=sb://<ns>.servicebus.windows.net/;...
 ##
-## Leave as null to use the publisher's built-in defaults ("order-events" /
-## "courier-status").
-event_hubs_order_topic: null
-event_hubs_courier_topic: null
+event_hubs_order_topic: order-events-g6
+event_hubs_courier_topic: courier-status-g6
 

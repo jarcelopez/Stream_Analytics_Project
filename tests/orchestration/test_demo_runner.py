@@ -64,6 +64,7 @@ def test_start_demo_writes_running_status_and_pid_files(monkeypatch, tmp_path: P
         return _FakeProcess(pids.pop(0))
 
     monkeypatch.setattr("stream_analytics.orchestration.demo_runner._spawn_process", _fake_spawn)
+    monkeypatch.setattr("stream_analytics.orchestration.demo_runner._is_pid_running", lambda _pid: True)
 
     run_state, message = start_demo(cfg)
     assert run_state == "RUNNING"
@@ -173,6 +174,26 @@ def test_read_demo_status_refreshes_heartbeat_approximate_last_batch(monkeypatch
 
     assert first["spark"]["last_batch_ts"] == "2026-04-15T10:00:00+00:00"
     assert second["spark"]["last_batch_ts"] == "2026-04-15T10:00:10+00:00"
+
+
+def test_read_demo_status_marks_error_when_spark_pid_not_running(monkeypatch, tmp_path: Path):
+    cfg = _config(tmp_path)
+    cfg.status_dir.mkdir(parents=True, exist_ok=True)
+    (cfg.status_dir / cfg.spark_pid_file).write_text("999999", encoding="utf-8")
+    (cfg.status_dir / cfg.spark_status_file).write_text(
+        json.dumps({"status": "RUNNING", "debug_mode": False, "message": "spark ok"}),
+        encoding="utf-8",
+    )
+    (cfg.status_dir / cfg.generator_status_file).write_text(
+        json.dumps({"status": "RUNNING", "debug_mode": False, "message": "generator ok"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("stream_analytics.orchestration.demo_runner._is_pid_running", lambda _pid: False)
+
+    status = read_demo_status(cfg)
+    assert status["spark"]["status"] == "ERROR"
+    assert "no longer running" in status["spark"]["message"]
 
 
 def test_read_demo_status_preserves_existing_last_batch_timestamp(tmp_path: Path):

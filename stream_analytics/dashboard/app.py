@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import sys
 import time
 import warnings
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable
+
+# Streamlit runs this file with a process cwd that may omit the repo root from sys.path.
+_repo_root = Path(__file__).resolve().parents[2]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
 
 from pydantic import BaseModel, Field
 
@@ -32,7 +38,7 @@ class KpiSnapshot:
 
 class DashboardConfig(BaseModel):
     metrics_path: str = Field(default="data/metrics_by_zone_restaurant_window", min_length=1)
-    refresh_seconds: int = Field(default=15, ge=1)
+    refresh_seconds: int = Field(default=4, ge=1)
     time_window_presets: list[str] = Field(default_factory=lambda: ["15m", "1h", "24h"])
     default_time_window: str = Field(default="1h", min_length=1)
     health_top_n_default: int = Field(default=10, ge=1, le=10)
@@ -70,13 +76,23 @@ def load_dashboard_config() -> DashboardConfig:
     )
 
 
+def _resolve_metrics_path(metrics_path: str) -> Path:
+    if _looks_like_remote_uri(metrics_path):
+        return Path(metrics_path)
+    raw = Path(metrics_path)
+    if raw.is_absolute():
+        return raw
+    # Same layout as `stream_analytics.common.config._project_root` (parent of `stream_analytics/`).
+    return Path(__file__).resolve().parent.parent.parent / raw
+
+
 def load_metrics_dataset(metrics_path: str) -> "pd.DataFrame":
     pd = _import_pandas()
-    path = Path(metrics_path)
+    path = _resolve_metrics_path(metrics_path)
     if not _looks_like_remote_uri(metrics_path) and not path.exists():
         return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
-    frame = pd.read_parquet(metrics_path)
+    frame = pd.read_parquet(path)
     _assert_required_columns(frame.columns)
     return frame
 
@@ -219,18 +235,24 @@ def run() -> None:
         st.error(f"Unable to load metrics parquet dataset: {exc}")
         return
 
-    if frame.empty:
-        st.info("No metrics data available yet. Once Spark writes curated parquet outputs, KPIs and charts will appear here.")
+    page_name = st.selectbox("Page", ["Overview", "Health/Anomalies", "Debug/Status"], index=0, key="dashboard_page")
+    if page_name == "Debug/Status":
+        _render_debug_status_page(st=st, refresh_seconds=config.refresh_seconds, auto_refresh=auto_refresh)
         return
 
-    page_name = st.selectbox("Page", ["Overview", "Health/Anomalies", "Debug/Status"], index=0, key="dashboard_page")
+    if frame.empty:
+        st.info(
+            "No curated metrics on disk yet. Event Hubs only holds the live stream; this dashboard reads Parquet written by "
+            "Spark (`stream_analytics.spark_jobs.ingestion`). Use Start Demo or run that module, set `metrics_sink_path` in "
+            f"`config/spark_jobs.yaml` to match metrics_path (`{config.metrics_path}`), align hub names with the publisher, "
+            "and wait at least one event-time window before KPIs appear."
+        )
+        return
+
     if page_name == "Overview":
         _render_overview_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
         return
-    if page_name == "Health/Anomalies":
-        _render_health_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
-        return
-    _render_debug_status_page(st=st, refresh_seconds=config.refresh_seconds, auto_refresh=auto_refresh)
+    _render_health_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
 
 
 def _render_demo_controls(*, st, config: DashboardConfig) -> None:

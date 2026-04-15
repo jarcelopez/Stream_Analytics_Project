@@ -7,8 +7,8 @@
 ##   SPARK_JOBS_ORDER_EVENT_HUB_NAME=order-events
 ##   SPARK_JOBS_COURIER_EVENT_HUB_NAME=courier-status
 
-order_event_hub_name: order-events
-courier_event_hub_name: courier-status
+order_event_hub_name: order-events-g6
+courier_event_hub_name: courier-status-g6
 
 consumer_group: $Default
 starting_position: latest
@@ -21,9 +21,9 @@ metrics_checkpoint_dir: checkpoints/spark_jobs/metrics_by_zone_restaurant_window
 # Curated parquet writes are partitioned by window_start for stable grader inspection paths.
 
 # Event-time semantics (UTC): convert event_time micros -> event_time_ts timestamp
-watermark_delay: 10 minutes
-window_duration: 10 minutes
-window_slide: 5 minutes
+watermark_delay: 10 seconds
+window_duration: 10 seconds
+window_slide: 5 seconds
 window_output_mode: append
 stress_index_threshold: 0.75
 

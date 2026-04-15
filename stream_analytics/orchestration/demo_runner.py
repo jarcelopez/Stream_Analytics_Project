@@ -12,6 +12,11 @@ from stream_analytics.orchestration.status_files import read_status_file, utc_no
 _HEARTBEAT_APPROX_MARKER = "[source:heartbeat-approx]"
 
 
+def _project_root() -> Path:
+    """Repository root (parent of `stream_analytics/`)."""
+    return Path(__file__).resolve().parent.parent.parent
+
+
 @dataclass(frozen=True)
 class DemoRunnerConfig:
     generator_command: list[str]
@@ -25,6 +30,7 @@ class DemoRunnerConfig:
 
 
 def read_demo_status(config: DemoRunnerConfig) -> dict[str, Any]:
+    _reconcile_demo_processes(config)
     _refresh_runtime_status(config)
     generator = read_status_file(config.status_dir / config.generator_status_file)
     spark = read_status_file(config.status_dir / config.spark_status_file)
@@ -169,8 +175,43 @@ def _validate_start_config(config: DemoRunnerConfig) -> None:
         raise ValueError("Missing spark command in dashboard configuration.")
 
 
+def _reconcile_demo_processes(config: DemoRunnerConfig) -> None:
+    """
+    If status files claim RUNNING but the recorded PID has exited, mark ERROR.
+
+    The dashboard discards child stderr; a fast-failing Spark job otherwise looks healthy.
+    """
+    for pid_file, status_file, label in (
+        (config.generator_pid_file, config.generator_status_file, "Generator"),
+        (config.spark_pid_file, config.spark_status_file, "Spark streaming"),
+    ):
+        status_path = config.status_dir / status_file
+        payload = read_status_file(status_path)
+        if str(payload.get("status", "")).upper() != "RUNNING":
+            continue
+        pid = _read_pid(config.status_dir / pid_file)
+        if pid is None:
+            continue
+        if _is_pid_running(pid):
+            continue
+        write_status_file(
+            status_path,
+            status="ERROR",
+            debug_mode=bool(payload.get("debug_mode", config.debug_mode)),
+            last_batch_ts=payload.get("last_batch_ts"),
+            message=(
+                f"{label} process (pid {pid}) is no longer running. "
+                "Run the same command in a terminal (without redirecting stderr) to see errors."
+            ),
+        )
+
+
 def _spawn_process(command: list[str]) -> subprocess.Popen[Any]:
-    kwargs: dict[str, Any] = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    kwargs: dict[str, Any] = {
+        "cwd": str(_project_root()),
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
     if os.name == "nt":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:

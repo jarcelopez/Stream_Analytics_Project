@@ -1,0 +1,7 @@
+{
+  "status": "STOPPED",
+  "last_heartbeat_ts": "2026-04-15T23:30:02.673261+00:00",
+  "last_batch_ts": "2026-04-15T23:30:02.673261+00:00",
+  "debug_mode": false,
+  "message": "Demo stopped successfully."
+}

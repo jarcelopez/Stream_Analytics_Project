@@ -1,147 +1,88 @@
 ---
 title: Stream Analytics Demo Project
-description: Milestone 1 – Streaming data feed design and generation for a synthetic food-delivery platform
+description: End-to-end streaming analytics for a synthetic food-delivery platform—generation, Event Hubs, Spark, curated metrics, and Streamlit.
 ---
 
 # Stream Analytics Demo Project
 
-A real-time analytics pipeline for a synthetic food-delivery platform. This repository delivers two distinct event feeds, AVRO schemas, and a configurable Python generator that produces sample JSON and AVRO batches.
+This repository is a **single integrated system**: a configurable Python generator and publisher emit realistic `order_events` and `courier_status` streams to **Azure Event Hubs**; a **Spark Structured Streaming** job ingests and validates events, applies **event-time windows and watermarks**, and writes a **curated Parquet metrics dataset**; a **Streamlit** dashboard reads that dataset and can **start, stop, and reset** the live demo while surfacing pipeline health.
 
 ## Table of Contents
 
-- [1.1 Create Two Feeds](#11-create-two-feeds)
-- [1.2 Schema & Formats](#12-schema--formats)
-- [1.3 Realism Requirements](#13-realism-requirements)
-- [1.4 Deliverables](#14-deliverables)
-- [Quick Start](#quick-start)
-- [Running the Generator](#running-the-generator)
-- [Use-Case to Dashboard Mapping (Story 6.1)](#use-case-to-dashboard-mapping-story-61)
-- [Production Readiness Reflection (Story 6.2)](#production-readiness-reflection-story-62)
-- [Further Reading](#further-reading)
+- [System overview](#system-overview)
+- [Repository layout](#repository-layout)
+- [Prerequisites](#prerequisites)
+- [Install and test](#install-and-test)
+- [Run the integrated demo](#run-the-integrated-demo)
+- [Data model](#data-model)
+- [Generator](#generator)
+- [Azure Event Hubs publisher](#azure-event-hubs-publisher)
+- [Spark streaming pipeline](#spark-streaming-pipeline)
+- [Streamlit dashboard](#streamlit-dashboard)
+- [Demo controls and observability](#demo-controls-and-observability)
+- [Verify windows, metrics, and the UI](#verify-windows-metrics-and-the-ui)
+- [Grader rubric mapping](#grader-rubric-mapping)
+- [Production readiness](#production-readiness)
+- [Further reading](#further-reading)
 - [License](#license)
 
 ---
 
-## 1.1 Create Two Feeds
+## System overview
 
-This project designs and implements two distinct streaming data feeds that represent the core operational dynamics of a real-time food-delivery platform:
+End-to-end data flow:
 
-1. **`order_events`** – Order lifecycle events (created, accepted, assigned, picked up, delivered, cancelled) with timestamps, amounts, and delivery metrics.
-2. **`courier_status`** – Courier availability and position updates (online, offline, assigned, en route, idle) with optional active-order linkage.
-
-### Why These Two Feeds Are Essential
-
-- **Order events** capture the primary business flow: demand, fulfillment, and outcomes. They enable windowed KPIs (order volume, completion rate, cancellation rate), delivery-time analytics, and anomaly detection (impossible durations, missing lifecycle steps).
-- **Courier status** captures supply-side dynamics: who is available, where they are, and whether they are actively delivering. Together with order events, it enables stream-table joins, zone-level stress metrics, and health views (e.g., offline couriers with active orders).
-
-### What Analytics They Enable
-
-- Windowed KPIs: order counts, average delivery time, cancellation rate per zone/restaurant/time window.
-- Event-time processing: watermarks and late-data handling for out-of-order arrivals.
-- Anomaly detection: impossible durations, missing steps, courier-offline mid-delivery scenarios.
-- Zone Stress Index and similar metrics that combine both feeds.
-
-### How Schemas Support Event-Time Processing and Late Data Handling
-
-Both feeds include an `event_time` field (microsecond resolution) that maps to Spark `timestamp` columns. Join identifiers (`order_id`, `restaurant_id`, `courier_id`, `zone_id`) support stream-table joins and reference data patterns. The design note documents how edge cases (late events, duplicates, missing steps, impossible durations, courier offline) are encoded so downstream jobs can apply watermarks and event-time semantics correctly.
-
----
-
-## 1.2 Schema & Formats
-
-For each feed:
-
-- **AVRO schema** – Defined in `stream_analytics/generator/schemas/` with sensible types, enums, optional fields, and a `schema_version` field for versioning.
-- **Dual output** – Events are generated in both JSON and AVRO.
-- **Event-time fields** – `event_time` (timestamp-micros) for analytics and watermarks.
-- **Join identifiers** – `order_id`, `restaurant_id`, `courier_id`, `zone_id` for stream-table joins and reference data patterns.
-
-| Feed           | Schema File           | Key Fields                                                                 |
-|----------------|-----------------------|----------------------------------------------------------------------------|
-| `order_events` | `order_events.avsc`    | `order_id`, `restaurant_id`, `courier_id`, `zone_id`, `event_time`, `status`, `total_amount`, `delivery_time_seconds` |
-| `courier_status` | `courier_status.avsc` | `courier_id`, `zone_id`, `event_time`, `status`, `active_order_id`        |
-
----
-
-## 1.3 Realism Requirements
-
-The generator supports:
-
-### Realistic Distributions
-
-- Configurable demand levels (`low`, `medium`, `high`).
-- Zone-level skew via configurable zone, restaurant, and courier counts.
-
-### Configurability
-
-- Number of zones, restaurants, and couriers.
-- Events-per-second target.
-- Demand level.
-- Edge-case rates (see below).
-- Output formats (JSON, AVRO, or both) and output directory.
-
-### Edge Cases for Streaming Correctness
-
-These are critical to demonstrate watermarks and event-time processing later:
-
-| Edge Case              | Config Field              | Description                                                                 |
-|------------------------|---------------------------|-----------------------------------------------------------------------------|
-| Out-of-order (late)    | `late_event_rate`         | Events arrive with timestamps that appear “late” relative to processing order |
-| Duplicates             | `duplicate_rate`          | Same logical event emitted more than once                                   |
-| Missing steps          | `missing_step_rate`       | e.g., delivered without “picked up” in the lifecycle                         |
-| Impossible durations   | `impossible_duration_rate`| Very large `delivery_time_seconds` for anomaly detection                   |
-| Courier offline mid-delivery | `courier_offline_rate` | Courier goes OFFLINE while `active_order_id` is non-null                    |
-
----
-
-## 1.4 Deliverables
-
-This repository provides:
-
-| Deliverable        | Location                                                                 |
-|--------------------|---------------------------------------------------------------------------|
-| Repository README  | This file: project overview, design rationale, run instructions         |
-| Design note        | [docs/design_note.md](docs/design_note.md): fields, events, assumptions, planned analytics |
-| Feed generator     | Python code in `stream_analytics/generator/`; config in `config/generator.yaml` |
-| AVRO schemas       | `stream_analytics/generator/schemas/order_events.avsc`, `courier_status.avsc` |
-| Sample data        | JSON and AVRO batches under `samples/generator/` (generated via CLI)      |
-
-**Team structure:** Solo developer. Update this section if your project has multiple contributors.
-
----
-
-## Quick Start
-
-1. Create and activate a virtual environment.
-2. Install dependencies:
-
-```bash
-pip install -r requirements.txt
+```mermaid
+flowchart LR
+  Gen[Generator / Publisher]
+  EH[Azure Event Hubs]
+  Spark[Spark Structured Streaming]
+  PQ[Curated Parquet KPIs]
+  UI[Streamlit Dashboard]
+  Gen --> EH
+  EH --> Spark
+  Spark --> PQ
+  PQ --> UI
 ```
 
-3. Run tests:
+- **Upstream:** Synthetic events mirror a food-delivery platform (orders and courier status), with tunable realism and streaming edge cases (late events, duplicates, and so on).
+- **Messaging:** Both feeds are published to Event Hubs with partition keys suited to zone- and courier-scoped analytics.
+- **Processing:** Spark consumes both hubs, validates records (invalid rows go to an error sink), windows on event time, and materializes dashboard-ready metrics.
+- **Experience:** The dashboard shows KPIs, health/anomaly views, and live run status driven by shared status files under `status/`.
 
-```bash
-pytest
-```
-
-4. Generate sample feeds:
-
-```bash
-python -m stream_analytics.generator.cli --sample
-```
+For a step-by-step demo with preflight checks and recovery, use the [Demo runbook](docs/demo_runbook.md).
 
 ---
 
-## Running the Generator
+## Repository layout
 
-### Prerequisites
+| Piece | Location |
+| --- | --- |
+| This README | Overview, run paths, troubleshooting |
+| Design note | [docs/design_note.md](docs/design_note.md): fields, assumptions, planned analytics |
+| Generator | `stream_analytics/generator/`; config: `config/generator.yaml` |
+| AVRO schemas | `stream_analytics/generator/schemas/order_events.avsc`, `courier_status.avsc` |
+| Event Hubs publisher | `stream_analytics.publisher.event_hub_publisher` |
+| Spark jobs | `stream_analytics.spark_jobs/`; config: `config/spark_jobs.yaml` |
+| Dashboard | `stream_analytics/dashboard/app.py`; config: `config/dashboard.yaml` |
+| Sample batches (CLI) | `samples/generator/` after `python -m stream_analytics.generator.cli --sample` |
+| Curated metrics sink | `data/metrics_by_zone_restaurant_window` (configurable) |
+| Run state | `status/generator_status.json`, `status/spark_job_status.json` |
+
+**Team structure:** Solo developer. Update this note if the project gains more contributors.
+
+---
+
+## Prerequisites
 
 - Python 3.10 or newer
 - Pip and a virtual environment (`venv` or `conda`)
 - Git (to clone the repository)
+- For the **full pipeline**: Azure Event Hubs namespace, hubs for both feeds, and connection strings with appropriate send/listen policies (see runbook and sections below)
 
-### Environment Setup
+---
+
+## Install and test
 
 From the project root:
 
@@ -153,11 +94,10 @@ source .venv/bin/activate
 .venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
+pytest
 ```
 
-### Sample Mode (JSON + AVRO)
-
-Produces small batches for both feeds:
+**Generate local sample files only** (no Azure required):
 
 ```bash
 python -m stream_analytics.generator.cli --sample
@@ -170,30 +110,77 @@ Outputs:
 - `samples/generator/courier_status/json/sample.jsonl`
 - `samples/generator/courier_status/avro/sample.avro`
 
+---
 
-### Observing Edge Cases
+## Run the integrated demo
 
-1. Set non-zero edge-case rates in `config/generator.yaml`:
+These steps tie every component together; details and PowerShell-first variants live in [docs/demo_runbook.md](docs/demo_runbook.md).
 
-   ```yaml
-   late_event_rate: 0.2
-   duplicate_rate: 0.2
-   missing_step_rate: 0.1
-   impossible_duration_rate: 0.1
-   courier_offline_rate: 0.1
+1. **Install** as in [Install and test](#install-and-test). For the UI, install Streamlit if needed: `pip install streamlit`.
+
+2. **Configure Azure** — set publisher and Spark connection strings (example PowerShell):
+
+   ```powershell
+   $env:EVENTHUB_CONNECTION_STRING="Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>"
+   $env:SPARK_EVENTHUB_CONNECTION_STRING="Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>"
    ```
 
-2. Run the generator:
+   Optional hub name overrides: `GENERATOR_EVENT_HUBS_ORDER_TOPIC`, `GENERATOR_EVENT_HUBS_COURIER_TOPIC`, `SPARK_JOBS_ORDER_EVENT_HUB_NAME`, `SPARK_JOBS_COURIER_EVENT_HUB_NAME`.
+
+3. **Align config files** — `config/spark_jobs.yaml` (hub names, checkpoints, error sink, window and metrics paths) and `config/dashboard.yaml` (`generator_command`, `spark_command`, `metrics_path`, `refresh_seconds`). Ensure working directories such as `status/` and `logs/` exist or will be created.
+
+4. **Launch the dashboard** from the project root:
 
    ```bash
-   python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42 --output-dir samples/generator
+   streamlit run stream_analytics/dashboard/app.py
    ```
 
-3. Inspect the JSON/AVRO outputs under `samples/generator/` for late events, duplicates, missing steps, impossible durations, and courier-offline scenarios.
+5. **In the app:** use **Start Demo** to run the configured publisher and Spark ingestion; watch **Pipeline Status** and **Last Processed Batch** until data is flowing; explore **Overview** and **Health/Anomalies**. Use **Stop Demo** or **Reset Demo** for a clean shutdown or fresh run.
+
+---
+
+## Data model
+
+### Feeds
+
+Two feeds represent core platform dynamics:
+
+1. **`order_events`** — Order lifecycle (created, accepted, assigned, picked up, delivered, cancelled) with timestamps, amounts, and delivery metrics.
+2. **`courier_status`** — Courier availability and position (online, offline, assigned, en route, idle) with optional active-order linkage.
+
+**Why both matter:** Order events drive demand and fulfillment KPIs; courier status drives supply-side and joinable context. Together they support windowed KPIs, event-time processing, anomaly detection (impossible durations, missing steps, courier offline while delivering), and zone-level stress views.
+
+**Event time and joins:** Both feeds include `event_time` (microsecond resolution) for watermarks and Spark timestamps. Identifiers `order_id`, `restaurant_id`, `courier_id`, and `zone_id` support joins and reference patterns. [docs/design_note.md](docs/design_note.md) documents edge-case encoding for late data and validation.
+
+### Schema summary
+
+| Feed | Schema file | Key fields |
+| --- | --- | --- |
+| `order_events` | `order_events.avsc` | `order_id`, `restaurant_id`, `courier_id`, `zone_id`, `event_time`, `status`, `total_amount`, `delivery_time_seconds` |
+| `courier_status` | `courier_status.avsc` | `courier_id`, `zone_id`, `event_time`, `status`, `active_order_id` |
+
+Schemas live under `stream_analytics/generator/schemas/` with enums, optional fields, and `schema_version`. The generator can emit **JSON** and/or **AVRO** per `config/generator.yaml`.
+
+### Realism and streaming edge cases
+
+- **Demand:** `low` / `medium` / `high`; tunable zones, restaurants, couriers, and events per second.
+- **Edge cases** (for watermark and correctness demos):
+
+| Edge case | Config field | Role |
+| --- | --- | --- |
+| Out-of-order (late) | `late_event_rate` | Late timestamps vs processing order |
+| Duplicates | `duplicate_rate` | Idempotency / dedup scenarios |
+| Missing steps | `missing_step_rate` | Invalid lifecycles |
+| Impossible durations | `impossible_duration_rate` | Anomaly signals |
+| Courier offline mid-delivery | `courier_offline_rate` | Supply health edge case |
+
+---
+
+## Generator
 
 ### Configuration
 
-Core parameters live in `config/generator.yaml`. Override via environment variables (prefix `GENERATOR_`):
+Core settings: `config/generator.yaml`. Overrides use the `GENERATOR_` prefix, for example:
 
 ```bash
 export GENERATOR_ZONE_COUNT=6
@@ -208,53 +195,63 @@ Print resolved configuration:
 python -m stream_analytics.generator.cli --print-config
 ```
 
-### Milestone 2: Stream to Azure Event Hubs
+### Observing edge cases locally
 
-Use the publisher module to stream both feeds (`order_events` and `courier_status`) to Azure Event Hubs.
+1. Set non-zero rates in `config/generator.yaml`, for example:
 
-1. Set required credentials and optional hub overrides:
+   ```yaml
+   late_event_rate: 0.2
+   duplicate_rate: 0.2
+   missing_step_rate: 0.1
+   impossible_duration_rate: 0.1
+   courier_offline_rate: 0.1
+   ```
 
-```powershell
-$env:EVENTHUB_CONNECTION_STRING="Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>"
-$env:GENERATOR_EVENT_HUBS_ORDER_TOPIC="order-events"
-$env:GENERATOR_EVENT_HUBS_COURIER_TOPIC="courier-status"
-```
+2. Run:
 
-2. Send one batch per feed:
+   ```bash
+   python -m stream_analytics.generator.cli --sample --debug-sample --debug-seed 42 --output-dir samples/generator
+   ```
 
-```bash
-python -m stream_analytics.publisher.event_hub_publisher --batch
-```
+3. Inspect outputs under `samples/generator/`.
 
-3. Stream continuously (Ctrl-C to stop):
+---
 
-```bash
-python -m stream_analytics.publisher.event_hub_publisher --continuous
-```
+## Azure Event Hubs publisher
 
-4. Run without Azure I/O to validate generation and logs:
+The publisher sends both feeds to Event Hubs.
 
-```bash
-python -m stream_analytics.publisher.event_hub_publisher --batch --dry-run
-```
+1. Set credentials and optional topic names (see [Run the integrated demo](#run-the-integrated-demo)).
 
-#### Partition/Key Strategy
+2. **One batch per feed:**
 
-- `order_events` uses `zone_id` as partition key to keep per-zone ordering and colocate zone analytics.
-- `courier_status` uses `courier_id` as partition key to preserve courier timeline ordering.
-- If a send fails, the publisher retries full batch sends up to three times before surfacing an error.
+   ```bash
+   python -m stream_analytics.publisher.event_hub_publisher --batch
+   ```
 
-#### Event Hubs Troubleshooting
+3. **Continuous stream** (Ctrl+C to stop):
 
-- **Auth failures (`Unauthorized`, CBS token errors):** check `EVENTHUB_CONNECTION_STRING` and ensure SAS policy has send rights.
-- **Missing entity / wrong hub name:** verify `GENERATOR_EVENT_HUBS_ORDER_TOPIC` and `GENERATOR_EVENT_HUBS_COURIER_TOPIC` match existing Event Hubs.
-- **Throughput / quota pressure:** reduce `sample_batch_size_per_feed` or `events_per_second`, or increase Event Hubs throughput units/processing units.
+   ```bash
+   python -m stream_analytics.publisher.event_hub_publisher --continuous
+   ```
 
-### Milestone 2: Spark Ingestion and Validation
+4. **Dry run** (no Azure I/O):
 
-Story 3.2 adds a Spark-ingestion contract that keeps stream processing alive while routing invalid records to an error sink.
+   ```bash
+   python -m stream_analytics.publisher.event_hub_publisher --batch --dry-run
+   ```
 
-1. Configure ingestion defaults in `config/spark_jobs.yaml`:
+**Partition keys:** `order_events` uses `zone_id` (zone ordering and colocation); `courier_status` uses `courier_id` (per-courier timeline). Failed batch sends retry up to three times.
+
+**Troubleshooting:** `Unauthorized` / CBS errors → connection string and SAS send rights. Wrong hub → check `GENERATOR_EVENT_HUBS_ORDER_TOPIC` and `GENERATOR_EVENT_HUBS_COURIER_TOPIC`. Throughput pressure → lower `sample_batch_size_per_feed` or `events_per_second`, or scale Event Hubs capacity.
+
+---
+
+## Spark streaming pipeline
+
+### Ingestion and validation
+
+Configuration: `config/spark_jobs.yaml` (example):
 
 ```yaml
 order_event_hub_name: order-events
@@ -265,50 +262,19 @@ checkpoint_base_dir: checkpoints/spark_jobs
 error_sink_path: logs/spark_ingestion_errors.jsonl
 ```
 
-2. Set required Event Hubs namespace connection string for Spark:
+Set `SPARK_EVENTHUB_CONNECTION_STRING` for the namespace. Optional env overrides: `SPARK_JOBS_ORDER_EVENT_HUB_NAME`, `SPARK_JOBS_COURIER_EVENT_HUB_NAME`, `SPARK_JOBS_STARTING_POSITION`, etc.
 
-```powershell
-$env:SPARK_EVENTHUB_CONNECTION_STRING="Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=<policy>;SharedAccessKey=<key>"
-```
+**Behavior:** Valid records continue through the pipeline. Invalid records go to the error sink with reason codes such as `parse_error`, `schema_mismatch`, `missing_field`, `invalid_timestamp`, and `invalid_feed_type`. Job status is reflected in `status/spark_job_status.json` (`RUNNING`, `STOPPED`, `ERROR`).
 
-3. Optional overrides (same precedence style as generator config):
+**Troubleshooting:** Missing `SPARK_EVENTHUB_CONNECTION_STRING` fails at config load. Wrong hub names or `starting_position` vs checkpoints affect replay. If no valid output appears, inspect `logs/spark_ingestion_errors.jsonl`.
 
-```powershell
-$env:SPARK_JOBS_ORDER_EVENT_HUB_NAME="order-events"
-$env:SPARK_JOBS_COURIER_EVENT_HUB_NAME="courier-status"
-$env:SPARK_JOBS_STARTING_POSITION="earliest"
-```
+### Event-time windows and watermarks
 
-4. Validation behavior:
-   - Valid records continue through ingestion.
-   - Invalid records are written with reason codes such as `parse_error`, `schema_mismatch`, `missing_field`, `invalid_timestamp`, and `invalid_feed_type`.
-   - Status is tracked in `status/spark_job_status.json` with `RUNNING`, `STOPPED`, or `ERROR`.
+- `event_time` (microseconds) becomes UTC Spark timestamp `event_time_ts`.
+- Windowing: `watermark_delay`, `window_duration`, `window_slide`, `window_output_mode` in `config/spark_jobs.yaml`.
+- In-memory window sinks include `order_events_windowed_kpis` and `courier_status_windowed_kpis`; window columns use `window_start` and `window_end`.
 
-#### Spark Ingestion Troubleshooting
-
-- **Missing `SPARK_EVENTHUB_CONNECTION_STRING`:** ingestion fails fast during config load.
-- **Wrong Event Hub name:** check `order_event_hub_name` and `courier_event_hub_name` (or `SPARK_JOBS_*` overrides).
-- **Unexpected replay/no replay:** verify `starting_position` (`latest` vs `earliest`) and checkpoint location.
-- **No records in valid sink:** inspect `logs/spark_ingestion_errors.jsonl` for `reason_code` patterns and malformed payload evidence.
-
-### Milestone 2: Event-Time Windows and Watermark Verification
-
-Story 3.3 introduces explicit event-time semantics for stateful/windowed paths:
-
-- `event_time` (microseconds) is converted to UTC Spark timestamp `event_time_ts`.
-- Watermark/window defaults are configured in `config/spark_jobs.yaml`:
-  - `watermark_delay`
-  - `window_duration`
-  - `window_slide`
-  - `window_output_mode`
-- Windowed memory sinks expose:
-  - `order_events_windowed_kpis`
-  - `courier_status_windowed_kpis`
-- Curated window columns follow `window_start` and `window_end` naming.
-
-#### How To Verify Watermark Behavior
-
-1. Configure event-time window values (or env overrides):
+Example env overrides:
 
 ```powershell
 $env:SPARK_JOBS_WATERMARK_DELAY="10 minutes"
@@ -316,45 +282,19 @@ $env:SPARK_JOBS_WINDOW_DURATION="10 minutes"
 $env:SPARK_JOBS_WINDOW_SLIDE="5 minutes"
 ```
 
-2. Run Spark ingestion job and publish mixed on-time/late events from generator/publisher.
-3. Inspect structured logs for watermark evidence (`windowing configuration initialized` and `window batch observability`).
-4. Confirm that:
-   - records within lateness threshold are represented in stateful updates,
-   - records older than `max_event_time - watermark_delay` are treated as too-late for windowed aggregation paths.
-5. Query memory tables and verify boundaries:
+Run the ingestion job with the publisher generating mixed on-time and late events; check logs for watermark initialization and window batch observability. Confirm late records within the lateness bound update state; records older than `max_event_time - watermark_delay` are dropped from windowed aggregation paths.
 
-```sql
-SELECT window_start, window_end, zone_id, feed_type, event_count
-FROM order_events_windowed_kpis
-ORDER BY window_start DESC;
-```
+### Curated metrics dataset
 
-### Milestone 2: Windowed KPI and Anomaly Metrics Dataset
+Denormalized Parquet for the dashboard:
 
-Story 3.4 adds a curated denormalized Parquet dataset for dashboard-ready metrics:
+- **Path:** `data/metrics_by_zone_restaurant_window` (default; configurable via `metrics_sink_path`)
+- **Checkpoint:** e.g. `checkpoints/spark_jobs/metrics_by_zone_restaurant_window` (`metrics_checkpoint_dir`)
+- **Dimensions:** `zone_id`, `restaurant_id`, `window_start`, `window_end`
+- **Core KPIs:** `active_orders`, `avg_delivery_time_seconds`, `cancellation_rate`, `total_orders`
+- **Health / stress:** `orders_per_active_courier`, `zone_stress_index`, `delivery_time_ratio`, `stress_threshold`, `is_stressed`
 
-- Dataset name/path: `metrics_by_zone_restaurant_window` at `data/metrics_by_zone_restaurant_window`
-- Checkpoint isolation: `checkpoints/spark_jobs/metrics_by_zone_restaurant_window`
-- Canonical dimensions:
-  - `zone_id`
-  - `restaurant_id`
-  - `window_start`
-  - `window_end`
-- Core KPIs:
-  - `active_orders`
-  - `avg_delivery_time_seconds`
-  - `cancellation_rate`
-  - `total_orders`
-- Intermediate/advanced metrics:
-  - `orders_per_active_courier`
-  - `zone_stress_index`
-  - `delivery_time_ratio`
-  - `stress_threshold`
-  - `is_stressed`
-
-#### How To Inspect Curated Metrics
-
-1. Ensure Spark job config includes:
+Example config snippet:
 
 ```yaml
 metrics_sink_path: data/metrics_by_zone_restaurant_window
@@ -362,8 +302,80 @@ metrics_checkpoint_dir: checkpoints/spark_jobs/metrics_by_zone_restaurant_window
 stress_index_threshold: 0.75
 ```
 
-2. Run ingestion + streaming workload (publisher/generator as in previous milestone sections).
-3. Inspect written Parquet:
+Keep data and checkpoint paths distinct to avoid duplicate writes on restart. Data layout is typically `data/metrics_by_zone_restaurant_window/window_start=<...>/part-*.parquet`.
+
+---
+
+## Streamlit dashboard
+
+The app reads curated Parquet metrics and exposes **Overview** (KPI cards and active-orders trend), **Health/Anomalies**, and **Debug/Status** views.
+
+**Configuration:** `config/dashboard.yaml`, for example:
+
+```yaml
+metrics_path: data/metrics_by_zone_restaurant_window
+refresh_seconds: 15
+```
+
+Optional env: `DASHBOARD_METRICS_PATH`, `DASHBOARD_REFRESH_SECONDS`.
+
+```bash
+streamlit run stream_analytics/dashboard/app.py
+```
+
+If no Parquet data exists yet, the Overview page shows an explicit empty state instead of crashing.
+
+---
+
+## Demo controls and observability
+
+The dashboard can orchestrate the live stack:
+
+- **Start Demo** — starts the configured generator/publisher and Spark commands (idempotent if already running).
+- **Stop Demo** — stops managed processes and updates status files.
+- **Reset Demo** — clean stop and reset of batch timestamp state for a fresh run.
+
+**Status artifacts** (under `status/`):
+
+- `status/generator_status.json`
+- `status/spark_job_status.json`
+
+Each includes `status` (`RUNNING`, `STOPPED`, `ERROR`), `last_heartbeat_ts`, `last_batch_ts`, `debug_mode`, and `message`.
+
+**Orchestration commands** in `config/dashboard.yaml`:
+
+```yaml
+status_dir: status
+generator_command:
+  - python
+  - -m
+  - stream_analytics.publisher.event_hub_publisher
+  - --continuous
+spark_command:
+  - python
+  - -m
+  - stream_analytics.spark_jobs.ingestion
+```
+
+**Pipeline UI:** per-process badges, **Last Processed Batch** from `last_batch_ts` (UTC and local), and **Batch Age** to detect stalls. Prefer `refresh_seconds` around 10–15 seconds. If checkpoint-derived batch times are missing, the Spark status message may document a heartbeat-based approximation.
+
+**Troubleshooting orchestration:** Missing `generator_command` / `spark_command` in config. Stale `status/*.pid` → **Reset Demo** or manual cleanup. Corrupt JSON status files → delete; the dashboard recreates safe defaults. **Pipeline:** RUNNING but high batch age → check Spark logs and `status/spark_job_status.json` `message`. Persistent “waiting for first batch” → confirm Event Hubs traffic and Spark ingestion.
+
+Full checklist: [docs/demo_runbook.md](docs/demo_runbook.md).
+
+---
+
+## Verify windows, metrics, and the UI
+
+### Windowed KPIs (Spark SQL)
+
+```sql
+SELECT window_start, window_end, zone_id, feed_type, event_count
+FROM order_events_windowed_kpis
+ORDER BY window_start DESC;
+```
+
+### Curated Parquet
 
 ```sql
 SELECT
@@ -382,191 +394,46 @@ FROM parquet.`data/metrics_by_zone_restaurant_window`
 ORDER BY window_start DESC, zone_id, restaurant_id;
 ```
 
-4. Run the grader-friendly Python inspector (no source edits required):
+### CLI inspector
 
 ```bash
 python -m stream_analytics.spark_jobs.inspect_curated_parquet --path data/metrics_by_zone_restaurant_window --limit 5
 ```
 
-This command prints the sampled schema, validates required fields/types, reports KPI value guardrails, and emits a Spark SQL query you can reuse.
+### Quick UI walk-through
 
-5. Expected sink/checkpoint layout:
-   - Data path: `data/metrics_by_zone_restaurant_window/window_start=<...>/part-*.parquet`
-   - Checkpoint path: `checkpoints/spark_jobs/metrics_by_zone_restaurant_window/*`
-   - The two paths must remain isolated to avoid duplicate writes on restart.
+1. `streamlit run stream_analytics/dashboard/app.py`
+2. If Spark is not **RUNNING**, click **Start Demo** and wait for **Last Processed Batch**.
+3. On **Overview**, change zone, restaurant, and time window; confirm KPIs and trend update.
+4. On **Health/Anomalies**, adjust threshold and top-N; confirm rankings match expectations.
+5. On **Debug/Status**, confirm batch age refreshes while the pipeline runs.
 
-### Milestone 3: Streamlit Overview Dashboard (Story 4.1)
+---
 
-Story 4.1 adds a Streamlit overview page that reads curated parquet metrics and shows:
+## Grader rubric mapping
 
-- KPI cards:
-  - total active orders
-  - average delivery time
-  - cancellation rate
-- a time-series chart for active-order trend by `window_start`
-
-1. Configure dashboard defaults in `config/dashboard.yaml`:
-
-```yaml
-metrics_path: data/metrics_by_zone_restaurant_window
-refresh_seconds: 15
-```
-
-2. Optional environment overrides:
-
-```powershell
-$env:DASHBOARD_METRICS_PATH="data/metrics_by_zone_restaurant_window"
-$env:DASHBOARD_REFRESH_SECONDS="10"
-```
-
-3. Install Streamlit if not already present:
-
-```bash
-pip install streamlit
-```
-
-4. Run the Overview app from project root:
-
-```bash
-streamlit run stream_analytics/dashboard/app.py
-```
-
-When curated parquet rows are present, the app renders KPIs and chart data. If no parquet data is available yet, the page shows an explicit empty-data message instead of failing.
-
-### Milestone 3: Start/Stop Demo from Dashboard (Story 5.1)
-
-Story 5.1 adds dashboard lifecycle controls for demo orchestration:
-
-- `Start Demo` starts configured generator and Spark commands (idempotent if already running).
-- `Stop Demo` stops managed processes and updates run-state artifacts.
-- `Reset Demo` performs a clean stop and resets batch-timestamp state for a fresh run.
-
-Status artifacts are written under `status/` and consumed by the dashboard run-state banner:
-
-- `status/generator_status.json`
-- `status/spark_job_status.json`
-
-Each artifact keeps a stable schema:
-
-- `status` (`RUNNING`, `STOPPED`, `ERROR`)
-- `last_heartbeat_ts`
-- `last_batch_ts`
-- `debug_mode`
-- `message`
-
-Dashboard orchestration commands are configurable in `config/dashboard.yaml`:
-
-```yaml
-status_dir: status
-generator_command:
-  - python
-  - -m
-  - stream_analytics.publisher.event_hub_publisher
-  - --continuous
-spark_command:
-  - python
-  - -m
-  - stream_analytics.spark_jobs.ingestion
-```
-
-#### Demo Orchestration Troubleshooting
-
-- **Missing config commands:** ensure both `generator_command` and `spark_command` are configured in `config/dashboard.yaml`.
-- **Stale PID files (`status/*.pid`):** use `Reset Demo` to clean stale run state; if needed, delete stale PID files manually.
-- **Status file corruption:** delete the affected status JSON file; the dashboard recreates it with a safe default.
-- **Manual recovery:** stop any stray processes from Task Manager (Windows) and rerun `Start Demo`.
-
-### Milestone 3: Pipeline Status and Last Processed Batch (Story 5.2)
-
-Story 5.2 extends the dashboard debug/status experience with runtime observability:
-
-- Explicit per-process state badges for generator and Spark (`RUNNING`, `STOPPED`, `ERROR`).
-- `Last Processed Batch` rendered from `status/spark_job_status.json:last_batch_ts` using UTC + local time display.
-- `Batch Age` indicator (seconds since last processed batch) to quickly detect stale pipelines.
-
-Expected status refresh cadence:
-
-- Dashboard auto-refresh should be enabled and configured to 10-15 seconds (`refresh_seconds` in `config/dashboard.yaml`).
-- While Spark is running, heartbeat updates continue and `last_batch_ts` is shown as the latest known batch progress.
-- If checkpoint-derived batch timestamps are unavailable, the system uses a heartbeat approximation and documents it in the Spark status message.
-
-#### Pipeline Status Troubleshooting
-
-- **Spark shown RUNNING but stale `Batch Age`:** verify Spark ingestion process is healthy and check `status/spark_job_status.json` `message` field for checkpoint/heartbeat hints.
-- **`Waiting for first batch` persists:** confirm data is actually flowing through Event Hubs and Spark has begun processing; this state is non-fatal before first batch.
-- **Unexpected `ERROR` badge:** inspect `message` in the affected status file first, then use `Reset Demo` and retry `Start Demo`.
-
-### Milestone 3: Reproducible Demo Run Instructions (Story 5.3)
-
-Story 5.3 provides a grader-friendly, reproducible runbook for a full dashboard-driven demo lifecycle with no source edits:
-
-- Setup and preflight validation checklist.
-- Start/monitor/stop/reset commands with expected checkpoints.
-- Healthy vs stalled/error signals for `last_batch_ts` and status artifacts.
-- Troubleshooting and recovery commands mapped to existing orchestration behavior.
-
-Quick command path (PowerShell):
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-streamlit run stream_analytics/dashboard/app.py
-```
-
-Quick command path (Linux/macOS):
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run stream_analytics/dashboard/app.py
-```
-
-In the dashboard, use `Start Demo` -> monitor `Pipeline Status` and `Last Processed Batch` -> `Stop Demo` or `Reset Demo`.
-
-Use the dedicated runbook:
-
-- [Demo runbook](docs/demo_runbook.md)
-
-### Use-Case to Dashboard Mapping (Story 6.1)
-
-This section maps rubric tiers directly to implemented dashboard behavior so graders can verify the expected flow quickly.
-
-| Tier | Use Case | Dashboard Page | Where to Click | What to Observe | Data Fields and Upstream Source | Validation Signals |
+| Tier | Use case | Dashboard | What to do | What you should see | Data / code path | Signals |
 | --- | --- | --- | --- | --- | --- | --- |
-| Basic | Windowed KPI monitoring for operations | `Overview` | In `Page`, choose `Overview`; optionally set `Zone`, `Restaurant`, and `Time window` filters. | KPI cards (`Total Active Orders`, `Avg Delivery Time (s)`, `Cancellation Rate`) and `Active Orders Trend` line chart update to current filters/time window. | Fields from `data/metrics_by_zone_restaurant_window`: `active_orders`, `avg_delivery_time_seconds`, `cancellation_rate`, `window_start`, `window_end`, keyed by `zone_id`, `restaurant_id`; produced by `stream_analytics.spark_jobs.windowed_kpis.build_windowed_kpi_df`. | Active filter caption confirms scope; dashboard auto-refresh cadence (`refresh_seconds`) surfaces live KPI movement during demo runs. |
-| Intermediate | Stateful, history-aware supply pressure behavior in rolling windows | `Overview` + `Health/Anomalies` | In `Overview`, lock `Zone` and `Restaurant`, then switch `Time window` (for example `15m` to `1h`); next open `Health/Anomalies` with the same zone and keep threshold constant. | KPI and trend context in `Overview` changes with the selected rolling window; corresponding health ranking for that zone shifts in `Health/Anomalies` as the windowed pressure context changes. | `orders_per_active_courier` is computed per `(zone_id, restaurant_id, window_start, window_end)` in `stream_analytics.spark_jobs.windowed_kpis.build_windowed_kpi_df`, then incorporated into `zone_stress_index` in `stream_analytics.spark_jobs.anomaly_scores.add_zone_stress_metrics`. | Verify the same zone produces different ranked scores when the window changes while threshold/top-N stay fixed; this demonstrates history-aware windowed behavior rather than a single-event spike. |
-| Advanced | Stress/anomaly detection for hotspot identification | `Health/Anomalies` | On the same page, keep `Health threshold` near default (0.8) and inspect top ranked zones. | Highest-risk zones appear first; only entries above threshold are shown; output is bounded by `Top N zones` per window. | Advanced fields in curated metrics: `zone_stress_index`, `delivery_time_ratio`, `stress_threshold`, `is_stressed` from `stream_analytics.spark_jobs.anomaly_scores.add_zone_stress_metrics`; dashboard ranking logic in `stream_analytics.dashboard.app.apply_health_filters`. | If pipeline is running, use `Debug/Status` and `Pipeline Status` (`RUNNING`, `last_batch_ts`, batch age) to confirm live updates while anomaly rankings refresh. |
-
-#### Quick grader walk-through
-
-1. Launch dashboard: `streamlit run stream_analytics/dashboard/app.py`.
-2. If `Spark Streaming` is not already `RUNNING`, click `Start Demo`, then wait until `Last Processed Batch` shows a timestamp.
-3. Verify Basic behavior in `Overview` by changing `Time window` and checking KPI/chart updates.
-4. Verify Intermediate/Advanced behavior in `Health/Anomalies` by changing threshold and top-N, then confirming ranked stressed zones update.
-5. Cross-check live status on `Debug/Status` and `Pipeline Status` (batch age should refresh regularly).
+| Basic | Windowed KPI monitoring | `Overview` | Choose `Overview`; set `Zone`, `Restaurant`, `Time window` as needed | KPI cards and `Active Orders Trend` track filters | `data/metrics_by_zone_restaurant_window`: `active_orders`, `avg_delivery_time_seconds`, `cancellation_rate`, `window_start`, `window_end`; built via `stream_analytics.spark_jobs.windowed_kpis.build_windowed_kpi_df` | Filter caption; auto-refresh shows live movement during demos |
+| Intermediate | History-aware supply pressure | `Overview` + `Health/Anomalies` | Lock zone/restaurant; change `Time window`; open `Health/Anomalies` with same zone | Overview context and health ranking shift with the window | `orders_per_active_courier` in `build_windowed_kpi_df`; `zone_stress_index` in `stream_analytics.spark_jobs.anomaly_scores.add_zone_stress_metrics` | Same zone, different windows → different ranks with fixed threshold/top-N |
+| Advanced | Stress / hotspot detection | `Health/Anomalies` | Default-ish threshold (~0.8); inspect top zones | Stressed zones ranked; threshold and top-N bound output | `zone_stress_index`, `delivery_time_ratio`, `stress_threshold`, `is_stressed` in `add_zone_stress_metrics`; filters in `stream_analytics.dashboard.app.apply_health_filters` | **Debug/Status** + pipeline badges and `last_batch_ts` during live runs |
 
 ---
 
-### Production Readiness Reflection (Story 6.2)
+## Production readiness
 
-Story 6.2 captures implementation-grounded tradeoffs, known limitations, and a concrete production-readiness action plan aligned with `FR39` and `NFR1`..`NFR6`.
+Tradeoffs, demo boundaries, and a concrete hardening plan (reliability, scale, governance, security) are documented here:
 
-- Reflection document: [Production readiness reflection](docs/production_readiness_reflection.md)
-- Scope includes:
-  - tradeoffs between responsiveness, simplicity, and robustness,
-  - current demo boundaries and limitations without aspirational guarantees,
-  - specific next steps for reliability, scaling, governance, and security hardening.
+- [Production readiness reflection](docs/production_readiness_reflection.md)
 
 ---
 
-## Further Reading
+## Further reading
 
-- [Design note](docs/design_note.md): Feed schemas, assumptions, edge-case encoding, and how the data enables downstream analytics
-- [Demo runbook](docs/demo_runbook.md): Reproducible start/monitor/stop flow for graders
-- [Production readiness reflection](docs/production_readiness_reflection.md): Tradeoffs, limitations, and production hardening roadmap
-- [AVRO schemas](stream_analytics/generator/schemas/): `order_events.avsc` and `courier_status.avsc`
+- [Design note](docs/design_note.md)
+- [Demo runbook](docs/demo_runbook.md)
+- [Production readiness reflection](docs/production_readiness_reflection.md)
+- [AVRO schemas](stream_analytics/generator/schemas/)
 
 ---
 
