@@ -1,0 +1,3 @@
+metrics_path: data/metrics_by_zone_restaurant_window
+refresh_seconds: 15
+

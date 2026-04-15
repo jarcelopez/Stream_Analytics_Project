@@ -64,8 +64,8 @@ development_status:
   3-5-persist-curated-outputs-in-parquet-for-inspection: done
   epic-3-retrospective: done
 
-  epic-4: backlog
-  4-1-build-core-kpi-and-time-series-dashboard-view: backlog
+  epic-4: in-progress
+  4-1-build-core-kpi-and-time-series-dashboard-view: done
   4-2-implement-zone-restaurant-and-time-window-filters: backlog
   4-3-add-health-and-anomaly-view: backlog
   epic-4-retrospective: optional

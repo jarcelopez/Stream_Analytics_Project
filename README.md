@@ -393,6 +393,44 @@ This command prints the sampled schema, validates required fields/types, reports
    - Checkpoint path: `checkpoints/spark_jobs/metrics_by_zone_restaurant_window/*`
    - The two paths must remain isolated to avoid duplicate writes on restart.
 
+### Milestone 3: Streamlit Overview Dashboard (Story 4.1)
+
+Story 4.1 adds a Streamlit overview page that reads curated parquet metrics and shows:
+
+- KPI cards:
+  - total active orders
+  - average delivery time
+  - cancellation rate
+- a time-series chart for active-order trend by `window_start`
+
+1. Configure dashboard defaults in `config/dashboard.yaml`:
+
+```yaml
+metrics_path: data/metrics_by_zone_restaurant_window
+refresh_seconds: 15
+```
+
+2. Optional environment overrides:
+
+```powershell
+$env:DASHBOARD_METRICS_PATH="data/metrics_by_zone_restaurant_window"
+$env:DASHBOARD_REFRESH_SECONDS="10"
+```
+
+3. Install Streamlit if not already present:
+
+```bash
+pip install streamlit
+```
+
+4. Run the Overview app from project root:
+
+```bash
+streamlit run stream_analytics/dashboard/app.py
+```
+
+When curated parquet rows are present, the app renders KPIs and chart data. If no parquet data is available yet, the page shows an explicit empty-data message instead of failing.
+
 ---
 
 ## Further Reading
