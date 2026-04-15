@@ -494,11 +494,45 @@ Expected status refresh cadence:
 - **`Waiting for first batch` persists:** confirm data is actually flowing through Event Hubs and Spark has begun processing; this state is non-fatal before first batch.
 - **Unexpected `ERROR` badge:** inspect `message` in the affected status file first, then use `Reset Demo` and retry `Start Demo`.
 
+### Milestone 3: Reproducible Demo Run Instructions (Story 5.3)
+
+Story 5.3 provides a grader-friendly, reproducible runbook for a full dashboard-driven demo lifecycle with no source edits:
+
+- Setup and preflight validation checklist.
+- Start/monitor/stop/reset commands with expected checkpoints.
+- Healthy vs stalled/error signals for `last_batch_ts` and status artifacts.
+- Troubleshooting and recovery commands mapped to existing orchestration behavior.
+
+Quick command path (PowerShell):
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+streamlit run stream_analytics/dashboard/app.py
+```
+
+Quick command path (Linux/macOS):
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run stream_analytics/dashboard/app.py
+```
+
+In the dashboard, use `Start Demo` -> monitor `Pipeline Status` and `Last Processed Batch` -> `Stop Demo` or `Reset Demo`.
+
+Use the dedicated runbook:
+
+- [Demo runbook](docs/demo_runbook.md)
+
 ---
 
 ## Further Reading
 
 - [Design note](docs/design_note.md): Feed schemas, assumptions, edge-case encoding, and how the data enables downstream analytics
+- [Demo runbook](docs/demo_runbook.md): Reproducible start/monitor/stop flow for graders
 - [AVRO schemas](stream_analytics/generator/schemas/): `order_events.avsc` and `courier_status.avsc`
 
 ---
