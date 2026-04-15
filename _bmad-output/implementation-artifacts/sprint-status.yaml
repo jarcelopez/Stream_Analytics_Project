@@ -76,7 +76,7 @@ development_status:
   5-3-provide-reproducible-demo-run-instructions: done
   epic-5-retrospective: done
 
-  epic-6: backlog
-  6-1-document-implemented-use-cases-and-dashboard-views: backlog
+  epic-6: in-progress
+  6-1-document-implemented-use-cases-and-dashboard-views: done
   6-2-write-reflection-on-tradeoffs-and-production-readiness: backlog
   epic-6-retrospective: optional

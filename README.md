@@ -15,6 +15,7 @@ A real-time analytics pipeline for a synthetic food-delivery platform. This repo
 - [1.4 Deliverables](#14-deliverables)
 - [Quick Start](#quick-start)
 - [Running the Generator](#running-the-generator)
+- [Use-Case to Dashboard Mapping (Story 6.1)](#use-case-to-dashboard-mapping-story-61)
 - [Further Reading](#further-reading)
 - [License](#license)
 
@@ -526,6 +527,24 @@ In the dashboard, use `Start Demo` -> monitor `Pipeline Status` and `Last Proces
 Use the dedicated runbook:
 
 - [Demo runbook](docs/demo_runbook.md)
+
+### Use-Case to Dashboard Mapping (Story 6.1)
+
+This section maps rubric tiers directly to implemented dashboard behavior so graders can verify the expected flow quickly.
+
+| Tier | Use Case | Dashboard Page | Where to Click | What to Observe | Data Fields and Upstream Source | Validation Signals |
+| --- | --- | --- | --- | --- | --- | --- |
+| Basic | Windowed KPI monitoring for operations | `Overview` | In `Page`, choose `Overview`; optionally set `Zone`, `Restaurant`, and `Time window` filters. | KPI cards (`Total Active Orders`, `Avg Delivery Time (s)`, `Cancellation Rate`) and `Active Orders Trend` line chart update to current filters/time window. | Fields from `data/metrics_by_zone_restaurant_window`: `active_orders`, `avg_delivery_time_seconds`, `cancellation_rate`, `window_start`, `window_end`, keyed by `zone_id`, `restaurant_id`; produced by `stream_analytics.spark_jobs.windowed_kpis.build_windowed_kpi_df`. | Active filter caption confirms scope; dashboard auto-refresh cadence (`refresh_seconds`) surfaces live KPI movement during demo runs. |
+| Intermediate | Stateful, history-aware supply pressure behavior in rolling windows | `Overview` + `Health/Anomalies` | In `Overview`, lock `Zone` and `Restaurant`, then switch `Time window` (for example `15m` to `1h`); next open `Health/Anomalies` with the same zone and keep threshold constant. | KPI and trend context in `Overview` changes with the selected rolling window; corresponding health ranking for that zone shifts in `Health/Anomalies` as the windowed pressure context changes. | `orders_per_active_courier` is computed per `(zone_id, restaurant_id, window_start, window_end)` in `stream_analytics.spark_jobs.windowed_kpis.build_windowed_kpi_df`, then incorporated into `zone_stress_index` in `stream_analytics.spark_jobs.anomaly_scores.add_zone_stress_metrics`. | Verify the same zone produces different ranked scores when the window changes while threshold/top-N stay fixed; this demonstrates history-aware windowed behavior rather than a single-event spike. |
+| Advanced | Stress/anomaly detection for hotspot identification | `Health/Anomalies` | On the same page, keep `Health threshold` near default (0.8) and inspect top ranked zones. | Highest-risk zones appear first; only entries above threshold are shown; output is bounded by `Top N zones` per window. | Advanced fields in curated metrics: `zone_stress_index`, `delivery_time_ratio`, `stress_threshold`, `is_stressed` from `stream_analytics.spark_jobs.anomaly_scores.add_zone_stress_metrics`; dashboard ranking logic in `stream_analytics.dashboard.app.apply_health_filters`. | If pipeline is running, use `Debug/Status` and `Pipeline Status` (`RUNNING`, `last_batch_ts`, batch age) to confirm live updates while anomaly rankings refresh. |
+
+#### Quick grader walk-through
+
+1. Launch dashboard: `streamlit run stream_analytics/dashboard/app.py`.
+2. If `Spark Streaming` is not already `RUNNING`, click `Start Demo`, then wait until `Last Processed Batch` shows a timestamp.
+3. Verify Basic behavior in `Overview` by changing `Time window` and checking KPI/chart updates.
+4. Verify Intermediate/Advanced behavior in `Health/Anomalies` by changing threshold and top-N, then confirming ranked stressed zones update.
+5. Cross-check live status on `Debug/Status` and `Pipeline Status` (batch age should refresh regularly).
 
 ---
 
