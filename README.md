@@ -16,6 +16,7 @@ A real-time analytics pipeline for a synthetic food-delivery platform. This repo
 - [Quick Start](#quick-start)
 - [Running the Generator](#running-the-generator)
 - [Use-Case to Dashboard Mapping (Story 6.1)](#use-case-to-dashboard-mapping-story-61)
+- [Production Readiness Reflection (Story 6.2)](#production-readiness-reflection-story-62)
 - [Further Reading](#further-reading)
 - [License](#license)
 
@@ -548,10 +549,23 @@ This section maps rubric tiers directly to implemented dashboard behavior so gra
 
 ---
 
+### Production Readiness Reflection (Story 6.2)
+
+Story 6.2 captures implementation-grounded tradeoffs, known limitations, and a concrete production-readiness action plan aligned with `FR39` and `NFR1`..`NFR6`.
+
+- Reflection document: [Production readiness reflection](docs/production_readiness_reflection.md)
+- Scope includes:
+  - tradeoffs between responsiveness, simplicity, and robustness,
+  - current demo boundaries and limitations without aspirational guarantees,
+  - specific next steps for reliability, scaling, governance, and security hardening.
+
+---
+
 ## Further Reading
 
 - [Design note](docs/design_note.md): Feed schemas, assumptions, edge-case encoding, and how the data enables downstream analytics
 - [Demo runbook](docs/demo_runbook.md): Reproducible start/monitor/stop flow for graders
+- [Production readiness reflection](docs/production_readiness_reflection.md): Tradeoffs, limitations, and production hardening roadmap
 - [AVRO schemas](stream_analytics/generator/schemas/): `order_events.avsc` and `courier_status.avsc`
 
 ---

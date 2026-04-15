@@ -78,5 +78,5 @@ development_status:
 
   epic-6: in-progress
   6-1-document-implemented-use-cases-and-dashboard-views: done
-  6-2-write-reflection-on-tradeoffs-and-production-readiness: backlog
-  epic-6-retrospective: optional
+  6-2-write-reflection-on-tradeoffs-and-production-readiness: done
+  epic-6-retrospective: done
