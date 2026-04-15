@@ -267,6 +267,7 @@ def test_run_shows_no_data_message_after_filters(monkeypatch):
         def __init__(self):
             self.session_state = {}
             self.info_messages = []
+            self.page_calls = []
 
         def set_page_config(self, **_kwargs):
             pass
@@ -276,6 +277,10 @@ def test_run_shows_no_data_message_after_filters(monkeypatch):
 
         def caption(self, *_args, **_kwargs):
             pass
+
+        def selectbox(self, _label, _options, **_kwargs):
+            self.page_calls.append(_label)
+            return "Overview"
 
         def toggle(self, *_args, **_kwargs):
             return False
@@ -318,6 +323,7 @@ def test_run_shows_no_data_message_after_filters(monkeypatch):
 
     run()
 
+    assert "Page" in fake_st.page_calls
     assert "No matching data for the current zone, restaurant, and time-window filters." in fake_st.info_messages
 
 
@@ -345,3 +351,112 @@ def test_apply_overview_filters_meets_dashboard_responsiveness_target():
 
     assert elapsed < 3.0
     assert not filtered.empty
+
+
+def test_run_renders_overview_page_with_page_selector(monkeypatch):
+    frame = pd.DataFrame(
+        [
+            {
+                "zone_id": "zone-1",
+                "restaurant_id": "rest-1",
+                "window_start": datetime(2026, 4, 1, 10, 0, tzinfo=UTC),
+                "window_end": datetime(2026, 4, 1, 10, 10, tzinfo=UTC),
+                "active_orders": 4,
+                "avg_delivery_time_seconds": 600.0,
+                "cancellation_rate": 0.25,
+            }
+        ]
+    )
+
+    class FakeColumn:
+        def __init__(self, value, metrics):
+            self._value = value
+            self._metrics = metrics
+
+        def selectbox(self, *_args, **_kwargs):
+            return self._value
+
+        def metric(self, label, value):
+            self._metrics.append((label, value))
+
+    class FakeSpinner:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _tb):
+            return False
+
+    class FakeStreamlit:
+        def __init__(self):
+            self.session_state = {}
+            self.page_calls = []
+            self.metric_calls = []
+            self.chart_calls = 0
+
+        def set_page_config(self, **_kwargs):
+            pass
+
+        def title(self, *_args, **_kwargs):
+            pass
+
+        def caption(self, *_args, **_kwargs):
+            pass
+
+        def selectbox(self, _label, _options, **_kwargs):
+            self.page_calls.append(_label)
+            return "Overview"
+
+        def toggle(self, *_args, **_kwargs):
+            return False
+
+        def spinner(self, *_args, **_kwargs):
+            return FakeSpinner()
+
+        def columns(self, _count):
+            if _count == 3:
+                return [
+                    FakeColumn("All zones", self.metric_calls),
+                    FakeColumn("All restaurants", self.metric_calls),
+                    FakeColumn("1h", self.metric_calls),
+                ]
+            raise AssertionError("Unexpected number of columns requested")
+
+        def subheader(self, *_args, **_kwargs):
+            pass
+
+        def line_chart(self, *_args, **_kwargs):
+            self.chart_calls += 1
+
+        def info(self, *_args, **_kwargs):
+            pass
+
+        def error(self, *_args, **_kwargs):
+            raise AssertionError("run() should not hit error path in this test")
+
+    fake_st = FakeStreamlit()
+    cache = MetricsCache(ttl_seconds=15.0, now_fn=lambda: 0.0)
+    cache._cached_value = frame
+    cache._cached_at = 0.0
+    fake_st.session_state["_overview_metrics_cache"] = cache
+
+    monkeypatch.setattr("stream_analytics.dashboard.app._import_streamlit", lambda: fake_st)
+    monkeypatch.setattr(
+        "stream_analytics.dashboard.app.load_dashboard_config",
+        lambda: DashboardConfig(
+            metrics_path="ignored",
+            refresh_seconds=15,
+            time_window_presets=["15m", "1h", "24h"],
+            default_time_window="1h",
+        ),
+    )
+    monkeypatch.setattr(
+        "stream_analytics.dashboard.app.datetime",
+        type("FakeDateTime", (), {"now": staticmethod(lambda _tz: datetime(2026, 4, 1, 10, 15, tzinfo=UTC))}),
+    )
+
+    run()
+
+    assert "Page" in fake_st.page_calls
+    assert fake_st.chart_calls == 1
+    metric_labels = [label for label, _ in fake_st.metric_calls]
+    assert metric_labels == ["Total Active Orders", "Avg Delivery Time (s)", "Cancellation Rate"]

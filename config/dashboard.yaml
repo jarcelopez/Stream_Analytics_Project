@@ -5,4 +5,7 @@ time_window_presets:
   - 1h
   - 24h
 default_time_window: 1h
+health_top_n_default: 10
+health_threshold_default: 0.80
+health_fallback_score_column: cancellation_rate
 

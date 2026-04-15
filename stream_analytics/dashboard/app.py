@@ -34,6 +34,9 @@ class DashboardConfig(BaseModel):
     refresh_seconds: int = Field(default=15, ge=1)
     time_window_presets: list[str] = Field(default_factory=lambda: ["15m", "1h", "24h"])
     default_time_window: str = Field(default="1h", min_length=1)
+    health_top_n_default: int = Field(default=10, ge=1, le=10)
+    health_threshold_default: float = Field(default=0.8, ge=0.0, le=1.0)
+    health_fallback_score_column: str = Field(default="cancellation_rate", min_length=1)
 
 
 class MetricsCache:
@@ -124,6 +127,67 @@ def format_active_filters(selected_zone: str, selected_restaurant: str, selected
     )
 
 
+def apply_health_filters(
+    frame: "pd.DataFrame",
+    *,
+    selected_zone: str,
+    selected_window: str,
+    threshold: float,
+    top_n: int,
+    fallback_score_column: str,
+    now_utc: datetime | None = None,
+) -> "pd.DataFrame":
+    pd = _import_pandas()
+    _assert_health_columns(frame.columns, fallback_score_column=fallback_score_column)
+    filtered = frame.copy()
+    if selected_zone != "All zones":
+        zone_values = filtered["zone_id"].astype("string")
+        filtered = filtered[zone_values == selected_zone]
+
+    delta = _parse_window_preset_to_timedelta(selected_window)
+    reference_time = now_utc or datetime.now(UTC)
+    threshold_time = reference_time - delta
+    window_end = pd.to_datetime(filtered["window_end"], utc=True, errors="coerce")
+    in_window = (window_end >= threshold_time) & (window_end <= reference_time)
+    filtered = filtered[in_window].copy()
+    if filtered.empty:
+        return pd.DataFrame(columns=["zone_id", "window_start", "window_end", "severity_score", "severity_source"])
+
+    score_candidates: list[str] = []
+    for name in ("anomaly_score", "zone_stress_index", fallback_score_column):
+        if name in filtered.columns and name not in score_candidates:
+            score_candidates.append(name)
+    numeric_scores = filtered[score_candidates].apply(pd.to_numeric, errors="coerce")
+    filtered["severity_score"] = numeric_scores.bfill(axis=1).iloc[:, 0]
+    filtered["severity_source"] = numeric_scores.notna().idxmax(axis=1)
+    filtered = filtered[filtered["severity_score"] >= float(threshold)]
+    if filtered.empty:
+        return pd.DataFrame(columns=["zone_id", "window_start", "window_end", "severity_score", "severity_source"])
+
+    top_n = max(1, min(int(top_n), 10))
+    ordered = filtered.sort_values(
+        by=["severity_score", "window_end", "zone_id"],
+        ascending=[False, False, True],
+    )
+    # AC requires top N stressed/anomalous zones for each time window.
+    top_per_window = ordered.groupby(["window_start", "window_end"], group_keys=False).head(top_n)
+    final = top_per_window.sort_values(
+        by=["window_end", "severity_score", "zone_id"],
+        ascending=[False, False, True],
+    )
+    return final[["zone_id", "window_start", "window_end", "severity_score", "severity_source"]].copy()
+
+
+def format_health_active_filters(selected_zone: str, selected_window: str, threshold: float, top_n: int) -> str:
+    return (
+        "Active filters - "
+        f"Zone: {selected_zone}, "
+        f"Time window: {selected_window}, "
+        f"Threshold: >= {threshold:.2f}, "
+        f"Top N: {top_n}"
+    )
+
+
 def run() -> None:
     st = _import_streamlit()
     config = load_dashboard_config()
@@ -132,9 +196,9 @@ def run() -> None:
         cache = MetricsCache(ttl_seconds=float(config.refresh_seconds))
         st.session_state["_overview_metrics_cache"] = cache
 
-    st.set_page_config(page_title="Stream Analytics Overview", layout="wide")
-    st.title("Stream Analytics - Overview")
-    st.caption("Curated KPI view from metrics parquet outputs.")
+    st.set_page_config(page_title="Stream Analytics Dashboard", layout="wide")
+    st.title("Stream Analytics Dashboard")
+    st.caption("Curated KPI and health/anomaly views from metrics parquet outputs.")
     auto_refresh = st.toggle("Auto-refresh", value=True)
     if auto_refresh:
         _schedule_rerun(st=st, refresh_seconds=config.refresh_seconds)
@@ -150,6 +214,34 @@ def run() -> None:
         st.info("No metrics data available yet. Once Spark writes curated parquet outputs, KPIs and charts will appear here.")
         return
 
+    page_name = st.selectbox("Page", ["Overview", "Health/Anomalies"], index=0, key="dashboard_page")
+    if page_name == "Overview":
+        _render_overview_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
+        return
+    _render_health_page(st=st, frame=frame, config=config, auto_refresh=auto_refresh)
+
+
+def _assert_required_columns(columns: "pd.Index") -> None:
+    missing = [name for name in REQUIRED_COLUMNS if name not in columns]
+    if missing:
+        raise ValueError(f"Missing required dashboard metrics columns: {missing}")
+
+
+def _assert_health_columns(columns: "pd.Index", *, fallback_score_column: str) -> None:
+    required = ("zone_id", "window_start", "window_end")
+    missing = [name for name in required if name not in columns]
+    if missing:
+        raise ValueError(f"Missing required health metrics columns: {missing}")
+    has_signal = any(name in columns for name in ("anomaly_score", "zone_stress_index", fallback_score_column))
+    if not has_signal:
+        raise ValueError(
+            "Health metrics require at least one score column from "
+            f"['anomaly_score', 'zone_stress_index', '{fallback_score_column}']."
+        )
+
+
+def _render_overview_page(*, st, frame: "pd.DataFrame", config: DashboardConfig, auto_refresh: bool) -> None:
+    st.subheader("Overview")
     presets = _normalize_window_presets(config.time_window_presets, config.default_time_window)
     default_window = config.default_time_window if config.default_time_window in presets else presets[0]
     zone_options = ["All zones", *sorted(str(value) for value in frame["zone_id"].dropna().unique())]
@@ -177,7 +269,6 @@ def run() -> None:
         return
 
     snapshot = build_kpi_snapshot(filtered)
-
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Active Orders", snapshot.total_active_orders)
     c2.metric("Avg Delivery Time (s)", f"{snapshot.avg_delivery_time_seconds:.2f}")
@@ -187,15 +278,59 @@ def run() -> None:
     st.subheader("Active Orders Trend")
     chart_frame = time_series[["window_start", "active_orders"]].set_index("window_start")
     st.line_chart(chart_frame)
-    st.caption(
-        f"Cache TTL: {config.refresh_seconds}s. Auto-refresh: {'on' if auto_refresh else 'off'}."
+    st.caption(f"Cache TTL: {config.refresh_seconds}s. Auto-refresh: {'on' if auto_refresh else 'off'}.")
+
+
+def _render_health_page(*, st, frame: "pd.DataFrame", config: DashboardConfig, auto_refresh: bool) -> None:
+    st.subheader("Health/Anomalies")
+    presets = _normalize_window_presets(config.time_window_presets, config.default_time_window)
+    default_window = config.default_time_window if config.default_time_window in presets else presets[0]
+    zone_options = ["All zones", *sorted(str(value) for value in frame["zone_id"].dropna().unique())]
+
+    controls = st.columns(4)
+    selected_zone = controls[0].selectbox("Zone", zone_options, index=0, key="health_zone_filter")
+    selected_window = controls[1].selectbox(
+        "Time window",
+        presets,
+        index=presets.index(default_window),
+        key="health_time_window_filter",
+    )
+    threshold = controls[2].slider(
+        "Health threshold",
+        min_value=0.0,
+        max_value=1.0,
+        value=float(config.health_threshold_default),
+        step=0.01,
+        key="health_threshold_filter",
+    )
+    top_n = controls[3].number_input(
+        "Top N zones",
+        min_value=1,
+        max_value=10,
+        value=int(config.health_top_n_default),
+        step=1,
+        key="health_top_n_filter",
     )
 
+    ranked = apply_health_filters(
+        frame,
+        selected_zone=selected_zone,
+        selected_window=selected_window,
+        threshold=float(threshold),
+        top_n=int(top_n),
+        fallback_score_column=config.health_fallback_score_column,
+    )
+    st.caption(format_health_active_filters(selected_zone, selected_window, float(threshold), int(top_n)))
+    if ranked.empty:
+        st.info("No stressed or anomalous zones exceeded the configured threshold for the current filters.")
+        return
 
-def _assert_required_columns(columns: "pd.Index") -> None:
-    missing = [name for name in REQUIRED_COLUMNS if name not in columns]
-    if missing:
-        raise ValueError(f"Missing required dashboard metrics columns: {missing}")
+    st.dataframe(
+        ranked.rename(columns={"severity_score": "score"}),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption(f"Cache TTL: {config.refresh_seconds}s. Auto-refresh: {'on' if auto_refresh else 'off'}.")
 
 
 def _looks_like_remote_uri(path: str) -> bool:
