@@ -1,3 +1,8 @@
 metrics_path: data/metrics_by_zone_restaurant_window
 refresh_seconds: 15
+time_window_presets:
+  - 15m
+  - 1h
+  - 24h
+default_time_window: 1h
 

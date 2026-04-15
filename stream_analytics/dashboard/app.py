@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time
+import warnings
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -30,6 +32,8 @@ class KpiSnapshot:
 class DashboardConfig(BaseModel):
     metrics_path: str = Field(default="data/metrics_by_zone_restaurant_window", min_length=1)
     refresh_seconds: int = Field(default=15, ge=1)
+    time_window_presets: list[str] = Field(default_factory=lambda: ["15m", "1h", "24h"])
+    default_time_window: str = Field(default="1h", min_length=1)
 
 
 class MetricsCache:
@@ -85,9 +89,39 @@ def prepare_time_series(frame: "pd.DataFrame") -> "pd.DataFrame":
     return ordered[["window_start", "window_end", "active_orders", "avg_delivery_time_seconds", "cancellation_rate"]]
 
 
-def apply_overview_filters(frame: "pd.DataFrame") -> "pd.DataFrame":
-    # Story 4.2 introduces filter controls; this function keeps the chart pipeline ready.
-    return frame
+def apply_overview_filters(
+    frame: "pd.DataFrame",
+    selected_zone: str,
+    selected_restaurant: str,
+    selected_window: str,
+    *,
+    now_utc: datetime | None = None,
+) -> "pd.DataFrame":
+    pd = _import_pandas()
+    filtered = frame.copy()
+    if selected_zone != "All zones":
+        zone_values = filtered["zone_id"].astype("string")
+        filtered = filtered[zone_values == selected_zone]
+    if selected_restaurant != "All restaurants":
+        restaurant_values = filtered["restaurant_id"].astype("string")
+        filtered = filtered[restaurant_values == selected_restaurant]
+
+    delta = _parse_window_preset_to_timedelta(selected_window)
+    reference_time = now_utc or datetime.now(UTC)
+    threshold = reference_time - delta
+    window_end = pd.to_datetime(filtered["window_end"], utc=True, errors="coerce")
+    in_window = (window_end >= threshold) & (window_end <= reference_time)
+    filtered = filtered[in_window]
+    return filtered.sort_values(by=["window_start", "window_end"]).copy()
+
+
+def format_active_filters(selected_zone: str, selected_restaurant: str, selected_window: str) -> str:
+    return (
+        "Active filters - "
+        f"Zone: {selected_zone}, "
+        f"Restaurant: {selected_restaurant}, "
+        f"Time window: {selected_window}"
+    )
 
 
 def run() -> None:
@@ -116,7 +150,32 @@ def run() -> None:
         st.info("No metrics data available yet. Once Spark writes curated parquet outputs, KPIs and charts will appear here.")
         return
 
-    filtered = apply_overview_filters(frame)
+    presets = _normalize_window_presets(config.time_window_presets, config.default_time_window)
+    default_window = config.default_time_window if config.default_time_window in presets else presets[0]
+    zone_options = ["All zones", *sorted(str(value) for value in frame["zone_id"].dropna().unique())]
+    restaurant_options = ["All restaurants", *sorted(str(value) for value in frame["restaurant_id"].dropna().unique())]
+
+    controls = st.columns(3)
+    selected_zone = controls[0].selectbox("Zone", zone_options, index=0, key="overview_zone_filter")
+    selected_restaurant = controls[1].selectbox(
+        "Restaurant",
+        restaurant_options,
+        index=0,
+        key="overview_restaurant_filter",
+    )
+    selected_window = controls[2].selectbox(
+        "Time window",
+        presets,
+        index=presets.index(default_window),
+        key="overview_time_window_filter",
+    )
+
+    filtered = apply_overview_filters(frame, selected_zone, selected_restaurant, selected_window)
+    st.caption(format_active_filters(selected_zone, selected_restaurant, selected_window))
+    if filtered.empty:
+        st.info("No matching data for the current zone, restaurant, and time-window filters.")
+        return
+
     snapshot = build_kpi_snapshot(filtered)
 
     c1, c2, c3 = st.columns(3)
@@ -141,6 +200,62 @@ def _assert_required_columns(columns: "pd.Index") -> None:
 
 def _looks_like_remote_uri(path: str) -> bool:
     return "://" in path
+
+
+def _normalize_window_presets(window_presets: list[str], default_preset: str) -> list[str]:
+    presets: list[str] = []
+    invalid_presets: list[str] = []
+    for preset in window_presets:
+        normalized = preset.strip()
+        if not normalized:
+            continue
+        if not _is_valid_window_preset(normalized):
+            invalid_presets.append(normalized)
+            continue
+        if normalized not in presets:
+            presets.append(normalized)
+    if not presets:
+        presets = ["15m", "1h", "24h"]
+    if default_preset and not _is_valid_window_preset(default_preset):
+        invalid_presets.append(default_preset)
+    if default_preset and _is_valid_window_preset(default_preset) and default_preset not in presets:
+        presets.insert(0, default_preset)
+    if invalid_presets:
+        joined = ", ".join(sorted(set(invalid_presets)))
+        warnings.warn(
+            f"Ignoring invalid dashboard time-window preset(s): {joined}",
+            UserWarning,
+            stacklevel=2,
+        )
+    return presets
+
+
+def _parse_window_preset_to_timedelta(window_preset: str) -> timedelta:
+    normalized = window_preset.strip().lower()
+    if len(normalized) < 2:
+        raise ValueError(f"Invalid time-window preset: {window_preset!r}")
+    suffix = normalized[-1]
+    amount_str = normalized[:-1]
+    if not amount_str.isdigit():
+        raise ValueError(f"Invalid time-window preset: {window_preset!r}")
+    amount = int(amount_str)
+    if amount <= 0:
+        raise ValueError(f"Invalid time-window preset: {window_preset!r}")
+    if suffix == "m":
+        return timedelta(minutes=amount)
+    if suffix == "h":
+        return timedelta(hours=amount)
+    if suffix == "d":
+        return timedelta(days=amount)
+    raise ValueError(f"Invalid time-window preset: {window_preset!r}")
+
+
+def _is_valid_window_preset(window_preset: str) -> bool:
+    try:
+        _parse_window_preset_to_timedelta(window_preset)
+    except ValueError:
+        return False
+    return True
 
 
 def _schedule_rerun(*, st, refresh_seconds: int) -> None:
